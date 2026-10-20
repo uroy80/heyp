@@ -198,7 +198,7 @@ release exists. A release needs a commit, so on the empty repository:
 1. **Settings → Actions → General → Disable actions**, then push `main`.
 2. Put every file named in `MODELS` in one directory: copy them out of an image that already has them
    (`docker create --name heyp-models heyp:dev && docker cp heyp-models:/opt/heyp/models ./models && docker rm heyp-models`),
-   or rebuild ours byte for byte with `scripts/export_models/export_all.sh ./models` (the optional int8 BiRefNet
+   or rebuild ours (Real-ESRGAN byte for byte, BiRefNet by parity) with `scripts/export_models/export_all.sh ./models` (the optional int8 BiRefNet
    included) and add the third-party ones with `python3 scripts/fetch_models.py ./models --with-optional` (it keeps
    verified files and downloads only the rest).
 3. `scripts/publish_models.sh ./models` — checks every size and sha256 (nothing is uploaded otherwise), refuses to

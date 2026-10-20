@@ -5,7 +5,7 @@ usage: python -I quantize_birefnet.py IN.onnx OUT.onnx
 
 ``quant_pre_process`` (ONNX shape inference + onnxruntime graph optimisation; symbolic shape inference is
 skipped because it has no rule for DeformConv) folds the shape arithmetic first, so twice as many MatMuls get
-int8 weights and the graph shrinks from ~16k to ~2.5k nodes. Reproduces the pinned sha256 (47d48750…) from
+int8 weights and the graph shrinks from ~16k to ~2.5k nodes. Produced the pinned sha256 (e0b9c02b…) from
 the pinned fp32 export with onnxruntime 1.31.0.
 
 84 MB instead of 181 MB; masks are near-identical (soft-IoU 0.970–0.9997 vs fp32 on 7 test photos) but

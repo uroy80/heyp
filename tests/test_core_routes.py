@@ -333,7 +333,7 @@ def test_hosted_mode_answers_api_requests_with_no_store(make_client):
     for path in (f"/api/files/{f['id']}", f"/api/files/{f['id']}/preview", f"/api/files/{f['id']}/download",
                  "/api/health", "/api/config"):
         assert c.get(path).headers["cache-control"] == "no-store", path
-    assert c.get("/").headers["cache-control"] == "no-cache"
+    assert c.get("/").headers["cache-control"] == "no-cache, no-transform"
 
 
 def test_local_mode_keeps_the_v1_preview_caching(client):

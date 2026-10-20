@@ -72,7 +72,7 @@ FastAPI  app/main.py      security headers · cross-origin guard · dotfile 404 
   checked against a pinned size + sha256; any mismatch fails the build): YuNet face detection (230 KB), U²-Net human
   segmentation (176 MB), BiRefNet lite (181 MB; optional int8 variant), Real-ESRGAN general x4v3 and its denoised blend
   (4.9 MB each), YOLOv9-t licence plates (7.8 MB). heyp's own exports are assets of the `models-v1` release
-  (`scripts/export_models/` rebuilds them byte for byte; `scripts/publish_models.sh` publishes them). At runtime a
+  (`scripts/export_models/` rebuilds them — Real-ESRGAN byte for byte, BiRefNet by parity with PyTorch; `scripts/publish_models.sh` publishes them). At runtime a
   missing model turns its feature off (`/api/health`), the tools that need it report `available: false`.
 - **Concurrency**: synchronous image endpoints run in Starlette's threadpool; `app.state.jobs` (`api.JobSlots`) admits
   heavy work first-come-first-served — at most `HEYP_MAX_JOBS` at once, their planned peak memory (`pipeline.plan`)

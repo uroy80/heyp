@@ -83,13 +83,13 @@ MODELS: dict[str, Model] = {
         "BSD-3-Clause", "Real-ESRGAN x4v3 blended 50/50 with realesr-general-wdn-x4v3 (v0.2.5.0)",
     ),
     "birefnet-lite-dc-1024.onnx": Model(
-        "b2e47a044190311c03c95f6c241a5a7f258d7c6df95948f28e6d4d050b1f9194",
+        "15daa3c785641d17680cc399df849b6fa54f289410ebd8b73877739899c293f9",
         180_666_098,
         (f"{RELEASE}/birefnet-lite-dc-1024.onnx",),
         "MIT", "BiRefNet_lite (ZhengPeng7/BiRefNet_lite@aa62cd87), native DeformConv export",
     ),
     "birefnet-lite-dc-1024.int8.onnx": Model(
-        "47d48750839ea23578e165610dff2926efb592c1136d3aa282d54f73beca4ef7",
+        "e0b9c02ba2aa4397f82328e0b87a7d291252ca5d3b865569ef2e5065e288bef2",
         84_074_805,
         (f"{RELEASE}/birefnet-lite-dc-1024.int8.onnx",),
         "MIT", "birefnet-lite-dc-1024.onnx, dynamic QUInt8 (MatMul+Conv) quantisation", optional=True,

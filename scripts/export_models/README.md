@@ -1,17 +1,19 @@
 # Model exports
 
 heyp ships three ONNX models that we convert ourselves from upstream PyTorch weights, plus one optional
-variant. The conversion is reproducible byte for byte (checked on linux/arm64 and linux/amd64), so anyone
-can rebuild the files that `scripts/fetch_models.py` downloads from the `models-v1` release and compare
-hashes. Third-party ONNX files (YuNet, U²-Net human segmentation, the YOLOv9 plate detector) are used as
+variant. The Real-ESRGAN exports are reproducible byte for byte (checked on linux/arm64 and linux/amd64), so
+anyone can rebuild them and compare hashes. BiRefNet's ONNX bytes depend on the CPU the export runs on (graph
+constant folding), so it is verified by parity with PyTorch instead (`export_birefnet.py` fails above 1e-4;
+the published copy is within 3e-9); the pinned copy in the `models-v1` release was built by the **Models**
+workflow on a GitHub-hosted runner (`.github/workflows/models.yml`, run log public). Third-party ONNX files (YuNet, U²-Net human segmentation, the YOLOv9 plate detector) are used as
 published and are not exported here.
 
 | File | From | Licence | sha256 |
 |---|---|---|---|
 | `realesr-general-x4v3.onnx` (Upscale, "strong") | Real-ESRGAN `realesr-general-x4v3.pth`, release v0.2.5.0 | BSD-3-Clause | `afca20f0…04c7` |
 | `realesr-general-x4v3-dn05.onnx` (Upscale, "balanced") | same, weights blended 0.5/0.5 with `realesr-general-wdn-x4v3.pth` | BSD-3-Clause | `3d1b12ec…6fcd` |
-| `birefnet-lite-dc-1024.onnx` (Remove background, any subject) | `ZhengPeng7/BiRefNet_lite@aa62cd87` `model.safetensors` + model code | MIT | `b2e47a04…9194` |
-| `birefnet-lite-dc-1024.int8.onnx` (optional) | the file above, dynamic QUInt8 (MatMul + Conv) | MIT | `47d48750…4ef7` |
+| `birefnet-lite-dc-1024.onnx` (Remove background, any subject) | `ZhengPeng7/BiRefNet_lite@aa62cd87` `model.safetensors` + model code | MIT | `15daa3c7…93f9` |
+| `birefnet-lite-dc-1024.int8.onnx` (optional) | the file above, dynamic QUInt8 (MatMul + Conv) | MIT | `e0b9c02b…bef2` |
 
 Full hashes: `SHA256SUMS` (they must equal the pins in `scripts/fetch_models.py`).
 
@@ -54,9 +56,10 @@ the three third-party models, which `fetch_models.py` uses as a fallback source)
 
 `export_sr.py` (both variants) and `quantize_birefnet.py` were re-run from these scripts against the pinned
 sources and reproduced the pinned sha256s byte for byte (torch 2.14.1+cpu, spandrel 0.4.2, onnxruntime
-1.31.0). `export_birefnet.py` matches the research export that produced `b2e47a04…` (same symbolic, wrapper
-attribute name `m`, opset 19, `dynamo=False`; the weights load with no missing or unexpected keys); a full
-re-export needs ~8 GB of RAM.
+1.31.0). `export_birefnet.py` (opset 19, `dynamo=False`, the weights load with no missing or unexpected keys)
+produced the pinned `15daa3c7…` on a GitHub ubuntu-24.04 runner with max |sigmoid(torch) − sigmoid(onnxruntime)|
+= 2.7e-9; on other CPUs the bytes differ but parity holds. `quantize_birefnet.py` turned that file into the pinned
+int8 `e0b9c02b…`. A full re-export needs ~8 GB of RAM.
 
 ## Running a script by hand
 

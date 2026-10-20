@@ -8,7 +8,7 @@
 # pinned size and sha256: that is checked first, and nothing is uploaded otherwise. To take them from an image
 # you built:
 #   docker create --name heyp-models heyp:dev && docker cp heyp-models:/opt/heyp/models ./models && docker rm heyp-models
-# scripts/export_models/ reproduces heyp's own exports byte for byte (including the optional int8 BiRefNet).
+# scripts/export_models/ rebuilds heyp's own exports (Real-ESRGAN byte for byte, BiRefNet by parity with PyTorch).
 #
 # With release immutability on, assets cannot be added once the release is published, so the optional models are
 # required too unless you pass --required-only. gh uploads the assets while the release is a draft and publishes
@@ -55,7 +55,7 @@ done < <(
 [[ ${#files[@]} -gt 0 ]] || { echo "fetch_models.py --list returned nothing" >&2; exit 1; }
 
 notes="ONNX models for heyp. Each file is pinned (size + sha256) in scripts/fetch_models.py, and image builds \
-refuse anything else; scripts/export_models/ reproduces the models heyp exports itself byte for byte."
+refuse anything else; scripts/export_models/ rebuilds the models heyp exports itself (Real-ESRGAN byte for byte, BiRefNet by parity with PyTorch)."
 cmd=(gh release create "$TAG" --repo "$REPO" --title "Models v1" --notes "$notes")
 [[ -z "$target" ]] || cmd+=(--target "$target")
 cmd+=("${files[@]}")
