@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 from PIL import Image, ImageDraw
@@ -20,7 +21,8 @@ needs_models = pytest.mark.skipif(not (face_mod.available() and segment.availabl
 US = presets.get_preset("us")
 EYE_PRESETS = [pid for pid in ("us", "schengen") if pid in presets.PRESETS]
 INFO_KEYS = {"preset", "width", "height", "dpi", "face_found", "head_ratio", "eye_from_bottom", "lines", "bands",
-             "background_edit_allowed", "crown_includes_hair", "roll_deg", "levelled_deg", "face_box_out", "warnings"}
+             "background_edit_allowed", "crown_includes_hair", "roll_deg", "levelled_deg", "face_box_out",
+             "source_frame", "warnings"}
 # Ground truth of tests/fixtures/astronaut.png, read off zoomed crops: top of the hair and chin rows.
 TRUE_HAIR, TRUE_CHIN = 15.5, 177.0
 TRUE_HEAD = TRUE_CHIN - TRUE_HAIR
@@ -459,6 +461,113 @@ def test_side_clipping_warning(scene):
     assert not any("wider" in w for w in ok["warnings"])
 
 
+# --- source_frame: where the frame sits on the source (context view) ---------------------------
+
+
+def _wave(x, y, period: float) -> np.ndarray:
+    """Smooth RGB texture at continuous image coordinates (x, y): a 1 px slip changes it by ~15 levels."""
+    return np.stack([128 + 100 * np.sin(2 * np.pi * x / period),
+                     128 + 100 * np.sin(2 * np.pi * y / (1.17 * period)),
+                     128 + 90 * np.sin(2 * np.pi * (x + 0.6 * y) / (1.43 * period))], axis=-1)
+
+
+def _wave_image(size: tuple[int, int], period: float) -> Image.Image:
+    yy, xx = np.mgrid[0:size[1], 0:size[0]].astype(np.float32) + 0.5  # pixel centres
+    return Image.fromarray(np.clip(_wave(xx, yy, period).round(), 0, 255).astype(np.uint8))
+
+
+def _to_source(sf: dict, out_size: tuple[int, int], u, v):
+    """The contract's mapping: output point (u, v) → source point."""
+    ow, oh = out_size
+    (cx, cy), (fw, fh), t = sf["center"], sf["size"], np.radians(sf["angle"])
+    dx, dy = (np.asarray(u) - ow / 2) * fw / ow, (np.asarray(v) - oh / 2) * fh / oh
+    return cx + np.cos(t) * dx - np.sin(t) * dy, cy + np.sin(t) * dx + np.cos(t) * dy
+
+
+def _wave_error(out: Image.Image, sf: dict, period: float, src_size: tuple[int, int]) -> float:
+    """Mean |output − texture at the mapped source point| over a grid of output pixels inside the source."""
+    ow, oh = out.size
+    vv, uu = np.mgrid[4:oh - 4:17, 4:ow - 4:17]
+    px, py = _to_source(sf, out.size, uu + 0.5, vv + 0.5)
+    margin = 3 * period / 37
+    inside = (px > margin) & (px < src_size[0] - margin) & (py > margin) & (py < src_size[1] - margin)
+    assert inside.sum() > 200  # enough samples
+    got = np.asarray(out.convert("RGB"), np.float64)[vv[inside], uu[inside]]
+    return float(np.abs(got - _wave(px[inside], py[inside], period)).mean())
+
+
+def _rolled(analysis: Analysis, roll: float, k: float = 1.0) -> Analysis:
+    """`analysis` scaled by `k`, with pupils measured at a `roll`° head tilt (levelled by make())."""
+    f = analysis.faces[0]
+    x, y, w, h = f.box
+    face = Face((x * k, y * k, w * k, h * k), f.score, {n: (p[0] * k, p[1] * k) for n, p in f.landmarks.items()})
+    ex, ey = face.eye_center()
+    dx, dy = 50 * k * np.cos(np.radians(roll)), 50 * k * np.sin(np.radians(roll))
+    mask = analysis.mask
+    if k != 1:
+        mask = np.asarray(Image.fromarray(mask).resize((round(mask.shape[1] * k), round(mask.shape[0] * k))))
+    return Analysis([face], mask, (round(analysis.size[0] * k), round(analysis.size[1] * k)),
+                    eyes=[((ex - dx, ey - dy), (ex + dx, ey + dy))])
+
+
+@pytest.mark.parametrize(("roll", "k"), [(0.0, 1), (7.3, 1), (-11.6, 1), (7.3, 2), (0.0, 2)])
+def test_source_frame_maps_output_pixels_to_the_source(scene, roll, k):
+    """Every output pixel comes from the source point the contract's mapping gives, levelled or not,
+    enlarged or reduced (k=2 shrinks ~1.8×, through the box-reduce path when levelled)."""
+    _, analysis = scene
+    a = _rolled(analysis, roll, k)
+    period = 37.0 * k
+    img = _wave_image(a.size, period)
+    out, info = passport.make(img, US, analysis=a, replace_background=False, zoom=1.1, offset_x=0.04, offset_y=-0.03)
+    sf = info["source_frame"]
+    assert set(sf) == {"width", "height", "center", "size", "angle"}
+    assert (sf["width"], sf["height"]) == img.size
+    assert sf["angle"] == info["levelled_deg"] == (round(roll, 1) if roll else 0.0)
+    assert sf["size"][0] / sf["size"][1] == pytest.approx(out.width / out.height, rel=1e-3)
+    # Measured: 0.3 (upright) – 0.8 (levelled). Half an output pixel off gives > 2, 0.1° off ≈ 2.2.
+    err = _wave_error(out, sf, period, img.size)
+    assert err < 1.5
+    px = sf["size"][0] / out.width  # one output pixel, in source px
+    for dx, dy in ((px, 0), (0, px), (-px, 0), (0, -px)):
+        moved = {**sf, "center": [sf["center"][0] + dx, sf["center"][1] + dy]}
+        assert _wave_error(out, moved, period, img.size) > 3.5
+    assert _wave_error(out, {**sf, "angle": sf["angle"] + 0.25}, period, img.size) > 3.5
+    if roll:  # the rotation's sign and size matter
+        assert _wave_error(out, {**sf, "angle": -sf["angle"]}, period, img.size) > 40
+        assert _wave_error(out, {**sf, "angle": 0.0}, period, img.size) > 40
+
+
+def test_source_frame_follows_offsets_like_a_drag(scene):
+    """Moving the subject by (dx, dy) of the frame moves the frame by −R·(dx·fw, dy·fh) on the source:
+    the photo lands exactly where the user dragged it (face, levelled face and centred crop alike)."""
+    img, analysis = scene
+    for a in (analysis, _rolled(analysis, 7.3), Analysis([], None, img.size)):
+        _, base = passport.make(img, US, analysis=a, zoom=1.2)
+        _, moved = passport.make(img, US, analysis=a, zoom=1.2, offset_x=0.1, offset_y=-0.05)
+        s0, s1 = base["source_frame"], moved["source_frame"]
+        assert s1["size"] == s0["size"] and s1["angle"] == s0["angle"]
+        t = np.radians(s0["angle"])
+        dx, dy = -0.1 * s0["size"][0], 0.05 * s0["size"][1]
+        want = (s0["center"][0] + np.cos(t) * dx - np.sin(t) * dy, s0["center"][1] + np.sin(t) * dx + np.cos(t) * dy)
+        assert s1["center"] == pytest.approx(want, abs=0.02)
+
+
+def test_source_frame_of_the_centred_crop():
+    """No face: the crop window (zoom shrinks it, offsets move the subject right/down)."""
+    W, H = 800, 600
+    img = _wave_image((W, H), 37.0)
+    out, info = passport.make(img, US, analysis=Analysis([], None, img.size))
+    assert info["source_frame"] == {"width": W, "height": H, "center": [400.0, 300.0], "size": [600.0, 600.0],
+                                    "angle": 0.0}
+    out, info = passport.make(img, US, analysis=Analysis([], None, img.size), zoom=1.5, offset_x=0.1, offset_y=0.2)
+    sf = info["source_frame"]
+    assert sf == {"width": W, "height": H, "center": [360.0, 220.0], "size": [400.0, 400.0], "angle": 0.0}
+    assert _wave_error(out, sf, 37.0, img.size) < 1.5
+    # The subject moved right/down: what sat at the output centre is now right of and below it.
+    plain, _ = passport.make(img, US, analysis=Analysis([], None, img.size), zoom=1.5)
+    assert np.asarray(out)[300 + 120, 300 + 60] == pytest.approx(np.asarray(plain)[300, 300], abs=4)
+
+
 # --- real photo (models) ------------------------------------------------------------------
 
 
@@ -551,6 +660,44 @@ def test_real_photo_warnings_are_specific(astronaut, astro_analysis):
 
 
 @needs_models
+def test_head_size_change_reframes_as_the_ui_predicts(astronaut, astro_analysis):
+    """Context view (static/js/canvas.js zoomPivot/zoomShift) mirrors §5.3 steps 2–4 for a zoom ratio r:
+    the head scales by r about the eye midpoint (x = centre + offset_x) and, vertically, the eye line stays —
+    lowered to keep MIN_TOP_MARGIN above the hair (never below eye_min) — or the crown stays (crown range),
+    or the hair top is re-placed by the 45/55 share. If this rule changes, update the UI model too."""
+    def frame(pid, zoom):
+        _, info = passport.make(astronaut, pid, analysis=astro_analysis, zoom=zoom, offset_x=0.05, offset_y=0.03)
+        box = info["face_box_out"]
+        return info, box["top_y"], info["lines"]
+
+    for pid, r in (("us", 1.15), ("us", 0.85), ("uk", 1.15), ("uk", 0.85), ("jp", 1.15)):
+        p = presets.get_preset(pid)
+        ow, oh = p.output_size()
+        info0, hair0, l0 = frame(pid, 1.0)
+        info1, hair1, l1 = frame(pid, r)
+        # the head scales by r; horizontally the eye midpoint stays at centre + offset_x
+        assert (l1["chin"] - l1["crown"]) == pytest.approx(r * (l0["chin"] - l0["crown"]), abs=0.3), pid
+        assert info1["face_box_out"]["center_x"] == pytest.approx(ow * 0.55, abs=0.1), pid
+        if p.eye_min is not None:
+            mid, min_top, lowest = 1 - (p.eye_min + p.eye_max) / 2, p.top_min or passport.MIN_TOP_MARGIN, 1 - p.eye_min
+
+            def eye_at(c):
+                return min(lowest, min_top + c) if mid - c < min_top else mid
+            cae = (l0["eye"] - hair0) / oh
+            assert l1["eye"] - l0["eye"] == pytest.approx((eye_at(cae * r) - eye_at(cae)) * oh, abs=0.3), pid
+        elif p.top_min is not None:
+            assert l1["crown"] == pytest.approx(l0["crown"], abs=0.2), pid
+        else:
+            vh, th = (l0["chin"] - hair0) / oh, (l0["chin"] - l0["crown"]) / oh
+
+            def top_at(q):
+                return min(0.45 * (1 - vh * q), 1 - vh * q - 0.275 * max(0.0, 1 - th * q))
+            assert hair1 - hair0 == pytest.approx((top_at(r) - top_at(1)) * oh, abs=0.3), pid
+    # the US ×1.15 case really lowers the eye line (otherwise this test would not exercise the rule)
+    assert frame("us", 1.15)[2]["eye"] - frame("us", 1.0)[2]["eye"] > 10
+
+
+@needs_models
 @pytest.mark.parametrize("cut", [35, 50])
 def test_real_crown_cut_by_source_top(astronaut, cut):
     """VIS-1: hair cut by the top of the source → warned, and the head is not under-measured."""
@@ -597,6 +744,34 @@ def test_real_tilted_head_is_levelled(astronaut):
     steep = ops.rotate(astronaut, -20, expand=True, fill="#c8c8c8")
     _, info = passport.make(steep, "us")
     assert info["levelled_deg"] == 0 and any("too much to level" in w for w in info["warnings"])
+
+
+@needs_models
+def test_real_tilted_source_frame_maps_to_the_photo(astronaut):
+    """Context view on a real tilted portrait: each pixel of the levelled frame is the photo's pixel
+    at the point source_frame maps it to (the UI lays the whole photo out from it)."""
+    img = ops.rotate(astronaut, 8, expand=True, fill="#c8c8c8")
+    out, info = passport.make(img, "us", replace_background=False, offset_x=0.05, zoom=0.9)
+    sf = info["source_frame"]
+    assert sf["angle"] == info["levelled_deg"] == pytest.approx(11.3, abs=1.5)
+    assert (sf["width"], sf["height"]) == img.size
+    src = np.asarray(img, np.float32)
+    vv, uu = np.mgrid[2:600:5, 2:600:5]
+
+    def error(frame: dict) -> float:
+        px, py = _to_source(frame, out.size, uu + 0.5, vv + 0.5)
+        inside = (px > 2) & (px < img.width - 2) & (py > 2) & (py < img.height - 2)
+        assert inside.mean() > 0.9
+        sampled = cv2.remap(src, (px - 0.5).astype(np.float32), (py - 0.5).astype(np.float32), cv2.INTER_LINEAR)
+        got = np.asarray(out, np.float32)[vv, uu]
+        return float(np.abs(got - sampled)[inside].mean())
+
+    err = error(sf)
+    assert err < 3.0
+    px = sf["size"][0] / out.width
+    assert error({**sf, "center": [sf["center"][0] + 2 * px, sf["center"][1]]}) > err + 1.5
+    assert error({**sf, "center": [sf["center"][0], sf["center"][1] + 2 * px]}) > err + 1.5
+    assert error({**sf, "angle": 0.0}) > 3 * err + 5
 
 
 @needs_models

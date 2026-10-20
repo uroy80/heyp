@@ -203,12 +203,20 @@ the most common op list in `ops`, the files that differ (per-file crops) in `ops
       "preset": "us", "width": 600, "height": 600,                 // output px of the passport frame
       "head_ratio": 0.594, "eye_from_bottom": 0.62, "face_found": true, "roll_deg": 2.1 | null,
       "lines":  {"crown": 52.0, "chin": 409.0, "eye": 228.0} | null,   // y in OUTPUT px (only when face_found)
+      "hair_top": 41.5 | null,                                     // top of the hair, OUTPUT px (≠ crown when hair is excluded)
       "bands":  {"head_min": 0.50, "head_max": 0.69, "eye_min": 0.5625|null, "eye_max": 0.6875|null,
                  "top_min": null, "top_max": null},                // preset ranges (fractions of height, eye from bottom)
-      "background_edit_allowed": true
+      "background_edit_allowed": true,
+      "source": null | {"width": 3024, "height": 4032,             // the image ENTERING the passport op (full res)
+                 "center": [1480.25, 1702.5], "size": [700.0, 900.0], // frame centre / size in its px (2 dp)
+                 "angle": 3.1}                                     // frame rotated clockwise (= levelled_deg)
   }
 }
 ```
+`source` = `passport.make()`'s `source_frame` (§5.3 step 8): output point (u, v) samples the source at
+`center + R(angle)·((u − width/2)·fw/width, (v − height/2)·fh/height)`, `R(θ) = [[cos θ, −sin θ], [sin θ, cos θ]]`.
+The UI's passport context view lays the pre-passport photo around a fixed frame with it (§7), and uses `lines`,
+`hair_top` and `bands` to predict where a head-size change re-frames the photo (§5.3 steps 2–4).
 `passport` is non-null only when the pipeline contains a `passport` op **and no later op changes geometry**
 (`adjust` and `background` keep it; sheet, resize, crop, rotate, pad … clear it). Its pixel values then match the
 preview's full-res `width`×`height`. Large outputs (> 12 MP) are not decoded again at full size for the display image.
@@ -405,7 +413,10 @@ A test ties each flag to its preset's notes. Countries without a preset yet are 
    `"<Country> rules don't allow digitally altered backgrounds — photograph against a plain light wall instead."`
 8. Return `(image, info)`; info keys are stable: `preset, width, height, dpi, face_found, head_ratio, eye_from_bottom,
    lines {crown, chin, eye} (output px), bands, background_edit_allowed, crown_includes_hair, roll_deg, levelled_deg,
-   face_box_out, warnings`. The pipeline sets `dpi=(preset.dpi, preset.dpi)`. Warnings: no face (centred crop) or face
+   face_box_out, source_frame, warnings`. `levelled_deg` is applied in 0.1° steps (exactly the rotation used);
+   `source_frame` = `{width, height, center, size, angle}` places the output frame on the input image (both the face
+   and the no-face branch; see §3 `passport.source`). Without a face, offsets move the subject right/down by
+   offset × frame size, like the face branch. The pipeline sets `dpi=(preset.dpi, preset.dpi)`. Warnings: no face (centred crop) or face
    detection unavailable, multiple faces, head ratio out of spec after clamping, frame exceeds source, low resolution,
    tilt, cut hair/chin, background rule.
 9. Analysis is memoised by the pipeline (§4), not inside `passport`.
@@ -496,6 +507,10 @@ for text. Works from 360 px wide (on phones the picture stays in view while the 
     on), "Show guides" (default on: head band, eye band, centre line, measured crown/eye/chin lines from `passport`),
     a measurement readout (head %, eyes %, tilt vs. the preset bands), fine-tune sliders (zoom, up/down, left/right),
     output Single photo | Print sheet (paper, copies ≤ 200, cut lines). Shows preset notes + official spec link.
+    **Context view** (Single photo with `passport.source`, not comparing): the frame stays fixed at ~62 % of the stage
+    with the whole pre-passport photo around it, dimmed by a veil; dragging (mouse/touch, anywhere on the stage) moves
+    the photo under the frame with the finished preview faded out, wheel/pinch/keys resize the head live, and each new
+    preview re-lays the photo out from `source` where the user left it. Otherwise the plain view is shown.
   - *Compress*: target max KB (+ optional min KB) with quick chips (20 · 50 · 100 · 200 · 500 KB · 1 MB), format
     (JPG/WebP/AVIF), achieved size, quality used and scale.
   - *Edit*: rotate left/right, flip H/V, straighten (−45…45°), brightness/contrast/saturation/sharpness, grayscale, auto-contrast.

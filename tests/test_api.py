@@ -529,6 +529,35 @@ def test_preview_passport_guides(client, monkeypatch):
     assert sheet["passport"] is None
 
 
+def test_preview_passport_source_frame(client, monkeypatch):
+    """Context view: ``passport.source`` places the frame on the full-res image entering the passport op."""
+    from app.imaging import passport
+
+    monkeypatch.setattr(passport, "analyze", lambda img, *a, **kw: passport.Analysis([], None, img.size))
+    (f,) = upload_ok(client, ("me.jpg", encode(photo(400, 500))))
+    crop = {"op": "crop", "x": 40, "y": 30, "width": 300, "height": 360}
+    pp = {"op": "passport", "preset": "us", "replace_background": False, "zoom": 1.5, "offset_x": -0.1}
+
+    def preview(*ops):
+        res = client.post("/api/preview", json={"ids": [f["id"]], "ops": list(ops), "output": {"format": "jpeg"}})
+        assert res.status_code == 200, res.text
+        return res.json()
+
+    data = preview(crop, pp)
+    assert set(data) == PREVIEW_KEYS
+    src = data["passport"]["source"]
+    assert set(src) == {"width", "height", "center", "size", "angle"}
+    # 300×360 after the crop; centred 300 px square at zoom 1.5 → 200 px, subject moved left by 0.1 · 200 px.
+    assert src == {"width": 300, "height": 360, "center": [170.0, 180.0], "size": [200.0, 200.0], "angle": 0.0}
+    assert src["size"][0] / src["size"][1] == pytest.approx(data["width"] / data["height"])
+    # Without a preceding op the source is the upload itself; adjust/background keep the passport object.
+    assert preview(pp)["passport"]["source"]["width"] == 400
+    assert preview(crop, pp, {"op": "adjust", "contrast": 1.1})["passport"]["source"] == src
+    # A later geometry op (sheet, resize …) drops the whole passport object, source included.
+    assert preview(crop, pp, {"op": "sheet", "paper": "4x6"})["passport"] is None
+    assert preview(crop, pp, {"op": "resize", "mode": "scale", "scale": 50})["passport"] is None
+
+
 def test_delete_drops_pipeline_caches(client, monkeypatch):
     from app.imaging import pipeline
 

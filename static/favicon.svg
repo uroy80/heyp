@@ -1,5 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect x="2" y="2" width="28" height="28" rx="8" fill="#5b5bd6"/>
-  <circle cx="21" cy="11.5" r="3" fill="#ffffff"/>
-  <path d="M7 24.5 13.2 16a1.2 1.2 0 0 1 1.94 0L19 21.3l1.6-2a1.2 1.2 0 0 1 1.88 0L26 23.8v.7H7Z" fill="#ffffff"/>
+  <style>
+    .p { fill: #f4efe4; stroke: #141210; }
+    .s { fill: #b4141b; }
+    .m { fill: none; stroke: #b4141b; }
+    @media (prefers-color-scheme: dark) {
+      .p { fill: #141311; stroke: #efe9dc; }
+      .s { fill: #ff5e52; }
+      .m { stroke: #ff5e52; }
+    }
+  </style>
+  <rect class="p" x="1.5" y="1.5" width="29" height="29" stroke-width="2"/>
+  <circle class="s" cx="11" cy="10.5" r="2.6"/>
+  <circle class="s" cx="11" cy="21.5" r="2.6"/>
+  <path class="m" d="M18 6.5 C 25.5 11, 25.5 21, 18 25.5" stroke-width="3.2" stroke-linecap="round"/>
 </svg>

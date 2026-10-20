@@ -289,20 +289,8 @@ def _render_frame(img: Image.Image, frame: tuple[float, float, float, float], si
         return _render_rotated(img, frame, size, fill, mask, lev)
     W, H = img.size
     ow, oh = size
-    x0, y0, x1, y1 = frame
+    x0, y0, x1, y1 = _snap_frame(frame, size, img.size)
     sx, sy = ow / (x1 - x0), oh / (y1 - y0)
-    # Ignore sub-pixel overshoot: nudge the frame back inside when it is off by < 1 output px.
-    for lo, hi, limit, s, axis in ((x0, x1, W, sx, 0), (y0, y1, H, sy, 1)):
-        shift = 0.0
-        if lo < 0 and -lo * s < 1.0:
-            shift = -lo
-        elif hi > limit and (hi - limit) * s < 1.0:
-            shift = limit - hi
-        if shift:
-            if axis == 0:
-                x0, x1 = x0 + shift, x1 + shift
-            else:
-                y0, y1 = y0 + shift, y1 + shift
 
     ox0 = max(0, math.ceil(-x0 * sx - 1e-6))
     oy0 = max(0, math.ceil(-y0 * sy - 1e-6))
@@ -325,6 +313,40 @@ def _render_frame(img: Image.Image, frame: tuple[float, float, float, float], si
             m = m.resize((ox1 - ox0, oy1 - oy0), _BILINEAR, box=mbox)
             out_mask[oy0:oy1, ox0:ox1] = np.clip(np.asarray(m, dtype=np.float32), 0.0, 1.0)
     return canvas, out_mask, sides
+
+
+def _snap_frame(frame: tuple[float, float, float, float], size: tuple[int, int],
+                image_size: tuple[int, int]) -> tuple[float, float, float, float]:
+    """Ignore sub-pixel overshoot of an unrotated frame: nudge it back inside the image when it
+    is off by < 1 output px (the frame _render_frame actually samples)."""
+    W, H = image_size
+    x0, y0, x1, y1 = frame
+    sx, sy = size[0] / (x1 - x0), size[1] / (y1 - y0)
+    for lo, hi, limit, s, axis in ((x0, x1, W, sx, 0), (y0, y1, H, sy, 1)):
+        shift = 0.0
+        if lo < 0 and -lo * s < 1.0:
+            shift = -lo
+        elif hi > limit and (hi - limit) * s < 1.0:
+            shift = limit - hi
+        if shift:
+            if axis == 0:
+                x0, x1 = x0 + shift, x1 + shift
+            else:
+                y0, y1 = y0 + shift, y1 + shift
+    return x0, y0, x1, y1
+
+
+def _source_frame(frame: tuple[float, float, float, float], lev: _Level, size: tuple[int, int],
+                  image_size: tuple[int, int]) -> dict:
+    """info["source_frame"]: where the rendered output frame sits on the source image (see make())."""
+    if not lev.deg:
+        frame = _snap_frame(frame, size, image_size)
+    x0, y0, x1, y1 = frame
+    cx, cy = lev.to_source((x0 + x1) / 2.0, (y0 + y1) / 2.0)
+    return {"width": int(image_size[0]), "height": int(image_size[1]),
+            "center": [round(float(cx), 2), round(float(cy), 2)],
+            "size": [round(float(x1 - x0), 2), round(float(y1 - y0), 2)],
+            "angle": float(lev.deg)}
 
 
 def _frame_corners(frame: tuple[float, float, float, float], lev: _Level) -> np.ndarray:
@@ -439,9 +461,19 @@ def make(img: Image.Image, preset: PassportPreset | str, *, background: str | No
       background_edit_allowed              preset flag (False → replacing the background is warned about)
       crown_includes_hair                  preset flag (False → crown is the skull top estimate)
       roll_deg                             measured head roll before levelling (+ = clockwise), or None
-      levelled_deg                         rotation applied to level the head (0 when none)
+      levelled_deg                         rotation applied to level the head (0 when none); applied in
+                                           0.1° steps, so this is exactly the rotation used
       face_box_out                         {"box": [x, y, w, h], "crown_y", "chin_y", "eye_y", "center_x",
                                            "top_y" (top of the hair)} in output px, or None
+      source_frame                         where the output frame sits on `img` (both branches):
+                                           {"width": W, "height": H,   size of `img` in px
+                                            "center": [cx, cy],        frame centre in `img` px (2 dp)
+                                            "size": [fw, fh],          frame size in `img` px (2 dp; fw/fh = out w/h)
+                                            "angle": deg}              frame rotated `deg` clockwise (y down) about
+                                                                       its centre; == levelled_deg (0: no levelling)
+                                           Output point (u, v) (continuous, 0…width × 0…height) samples `img` at
+                                           center + R(angle)·((u − width/2)·fw/width, (v − height/2)·fh/height),
+                                           R(θ) = [[cos θ, −sin θ], [sin θ, cos θ]]. It may extend beyond `img`.
       warnings                             list of user-facing strings
     """
     if not isinstance(img, Image.Image):
@@ -477,7 +509,7 @@ def make(img: Image.Image, preset: PassportPreset | str, *, background: str | No
                   "top_min": preset.top_min, "top_max": preset.top_max},
         "background_edit_allowed": preset.background_edit_allowed,
         "crown_includes_hair": preset.crown_includes_hair,
-        "roll_deg": None, "levelled_deg": 0.0, "face_box_out": None, "warnings": warnings,
+        "roll_deg": None, "levelled_deg": 0.0, "face_box_out": None, "source_frame": None, "warnings": warnings,
     }
 
     if not analysis.faces:
@@ -486,12 +518,15 @@ def make(img: Image.Image, preset: PassportPreset | str, *, background: str | No
                         "Face detection is unavailable — used a centred crop; check the framing and background manually.")
         aspect = ow / oh
         cw, ch = (W, W / aspect) if W / H <= aspect else (H * aspect, H)
-        cx, cy = W / 2 + offset_x * cw, H / 2 + offset_y * ch
-        frame = (cx - cw / 2 / zoom, cy - ch / 2 / zoom, cx + cw / 2 / zoom, cy + ch / 2 / zoom)
+        fw, fh = cw / zoom, ch / zoom
+        # Same convention as the face branch: the subject moves right/down by offset × frame size.
+        cx, cy = W / 2 - offset_x * fw, H / 2 - offset_y * fh
+        frame = (cx - fw / 2, cy - fh / 2, cx + fw / 2, cy + fh / 2)
         out, _, sides = _render_frame(work, frame, (ow, oh), bg, None)
         if sides:
             warnings.append("The frame extends beyond the photo; the gap was filled with the background colour.")
         scale = ow / (frame[2] - frame[0])
+        info["source_frame"] = _source_frame(frame, _Level(), (ow, oh), img.size)
     else:
         idx = int(face_index)
         if idx >= len(analysis.faces):
@@ -511,7 +546,7 @@ def make(img: Image.Image, preset: PassportPreset | str, *, background: str | No
                 warnings.append(f"The head is tilted by about {abs(roll):.0f}°, too much to level automatically; "
                                 "retake the photo with the head upright.")
             elif level and abs(roll) >= LEVEL_MIN_DEG:
-                angle = roll
+                angle = round(roll, 1)  # levelled_deg / source_frame.angle report exactly this
             elif not level and abs(roll) > TILT_WARN_DEG:
                 warnings.append(f"The head is tilted by about {abs(roll):.0f}°; turn on levelling or "
                                 "straighten the photo.")
@@ -520,7 +555,7 @@ def make(img: Image.Image, preset: PassportPreset | str, *, background: str | No
             if coarse is not None and abs(coarse) >= COARSE_TILT_DEG:
                 warnings.append("The head looks tilted (the eyes could not be measured precisely); "
                                 "make sure it is upright.")
-        info["levelled_deg"] = round(angle, 1)
+        info["levelled_deg"] = angle
         geo = head_geometry(face, analysis.mask, image_size=img.size, roll=angle,
                             crown_includes_hair=preset.crown_includes_hair)
         lev = _Level(angle, (geo["center_x"], geo["eye_y"]))
@@ -555,6 +590,7 @@ def make(img: Image.Image, preset: PassportPreset | str, *, background: str | No
             warnings.append("Background replacement is unavailable (segmentation model missing); "
                             "the original background was kept.")
         out, out_mask, sides = _render_frame(work, frame, (ow, oh), bg, analysis.mask, lev)
+        info["source_frame"] = _source_frame(frame, lev, (ow, oh), img.size)
         if replace:
             out = segment.composite(out, out_mask, bg)
             if not preset.background_edit_allowed:

@@ -1,14 +1,14 @@
 // heyp UI entry point: wires state, tools, canvas, preview, intake and export together.
 
-import { h, $, debounce, fmtBytes, isTyping, replaceIfChanged } from './js/dom.js';
+import { h, $, clamp, debounce, fmtBytes, isTyping, replaceIfChanged } from './js/dom.js';
 import { icon } from './js/icons.js';
 import { api, imageRetryDelay } from './js/api.js';
 import {
-  state, activeFile, buildOps, buildOutput, preCropOps, describeEdits, baseDims, ratioValue,
+  state, activeFile, buildOps, buildOutput, preCropOps, prePassportOps, framingOf, describeEdits, baseDims, ratioValue,
   passportActive, rotateQuarter, cropRatioFor, exportRequest, exportLimitError, warningSummary, qualityApplies,
   planUploads, FORMAT_LABEL,
 } from './js/state.js';
-import { Canvas } from './js/canvas.js';
+import { Canvas, isSourceFrame, zoomPivot } from './js/canvas.js';
 import { fitRatio, snapBox } from './js/cropbox.js';
 import { toast, initTheme } from './js/ui.js';
 import { Pending } from './js/pending.js';
@@ -228,38 +228,51 @@ function cropBoxMode() {
   return Boolean(state.tool === 'crop' && f && !passportActive() && (!f.crop || f.crop.kind === 'box'));
 }
 
-/** Image the crop tool draws on: original preview, or a server render of the pre-crop ops. */
-function cropBase(f) {
-  const ops = preCropOps(f);
+/**
+ * A server render of the ops before a tool's own op, kept on the file in `f[slot]` (keyed by the ops):
+ * the crop tool draws on the pre-crop image ('cropBase'), the passport context view shows the image
+ * entering the passport op ('passportBase'). No ops → the original preview. Null while it is fetched.
+ */
+function opsBase(f, slot, ops) {
   if (!ops.length) return { src: api.previewUrl(f.id), w: f.info.width, h: f.info.height };
   const key = JSON.stringify(ops);
-  if (f.cropBase?.key === key) return f.cropBase;
-  ensureCropBase(f, ops, key);
+  if (f[slot]?.key === key) return f[slot];
+  if (f[`${slot}Failed`] !== key) ensureBase(f, slot, ops, key);
   return null;
 }
 
+/** Image the crop tool draws on: original preview, or a server render of the pre-crop ops. */
+const cropBase = (f) => opsBase(f, 'cropBase', preCropOps(f));
+
 let baseSeq = 0;
 let baseCtrl = null;
-async function ensureCropBase(f, ops, key) {
-  if (f.cropBasePending === key) return;
+async function ensureBase(f, slot, ops, key) {
+  const pending = `${slot}Pending`;
+  if (f[pending] === key) return;
   baseCtrl?.abort();
   baseCtrl = new AbortController();
   const my = ++baseSeq;
-  f.cropBasePending = key;
+  f[pending] = key;
   setBasePending(true);
   try {
     const res = await api.preview({ ids: [f.id], ops, output: { format: 'jpeg', quality: 85, strip_metadata: true } }, baseCtrl.signal);
     if (my !== baseSeq) return;
-    f.cropBase = { key, src: res.image, w: res.width, h: res.height };
+    f[slot] = { key, src: res.image, w: res.width, h: res.height };
     if (f.id === state.activeId) {
       renderCanvas();
       syncPanel();
     }
   } catch (e) {
     if (e?.name === 'AbortError' || my !== baseSeq) return;
+    if (slot === 'passportBase' && e?.status !== 404) {
+      // only the surroundings are missing: keep the plain view, and don't ask again for these edits
+      // unless the server was merely busy
+      if (e?.status !== 503) f[`${slot}Failed`] = key;
+      return;
+    }
     handleFileError(e, f);
   } finally {
-    if (f.cropBasePending === key) f.cropBasePending = null;
+    if (f[pending] === key) f[pending] = null;
     if (my === baseSeq) setBasePending(false);
   }
 }
@@ -268,6 +281,7 @@ function renderCanvas() {
   const f = activeFile();
   document.body.classList.toggle('has-files', state.files.length > 0);
   el.compare.hidden = !f || cropBoxMode();
+  if (!panFor(f)) canvas.setPan(null);
   if (!f) {
     canvas.crop.show(false);
     canvas.setBadge('');
@@ -309,9 +323,78 @@ function renderCanvas() {
   const p = f.preview;
   const src = p?.image || api.previewUrl(f.id);
   if (!guidesFor(f)) canvas.setGuides(null);
-  canvas.show(src, p ? { w: p.width, h: p.height } : infoDims(f), f.name).then(() => {
+  canvas.show(src, p ? { w: p.width, h: p.height } : infoDims(f), f.name, { context: contextFor(f) }).then(() => {
     if (canvas.src === src && activeFile() === f && !comparing) canvas.setGuides(guidesFor(f));
   });
+  if (panFor(f)) canvas.setPan(PAN);
+}
+
+// ── drag-to-align (passport) ─────────────────────────────────────────────────
+
+const PAN_LIMIT = 0.25; // same range as the position sliders
+const ZOOM_MIN = 0.85; // same range as the head-size slider
+const ZOOM_MAX = 1.15;
+const round3 = (v) => Math.round(v * 1000) / 1000;
+const PAN = {
+  onCommit(fx, fy) {
+    const p = state.passport;
+    p.offsetX = round3(clamp(p.offsetX + fx, -PAN_LIMIT, PAN_LIMIT));
+    p.offsetY = round3(clamp(p.offsetY + fy, -PAN_LIMIT, PAN_LIMIT));
+    changed();
+  },
+  /** The part of a drag (fractions of the frame) that stays within the position limits. */
+  clampMove(fx, fy) {
+    const p = state.passport;
+    return [clamp(p.offsetX + fx, -PAN_LIMIT, PAN_LIMIT) - p.offsetX, clamp(p.offsetY + fy, -PAN_LIMIT, PAN_LIMIT) - p.offsetY];
+  },
+  onZoom(step) {
+    const p = state.passport;
+    p.zoom = round3(clamp(p.zoom + step, ZOOM_MIN, ZOOM_MAX));
+    changed();
+  },
+  /** Touch pinch: head size × ratio. */
+  onZoomBy(ratio) {
+    const p = state.passport;
+    p.zoom = round3(clamp(p.zoom * ratio, ZOOM_MIN, ZOOM_MAX));
+    changed();
+  },
+  clampScale(ratio) {
+    const z = state.passport.zoom;
+    return clamp(z * ratio, ZOOM_MIN, ZOOM_MAX) / z;
+  },
+  onReset() {
+    Object.assign(state.passport, { offsetX: 0, offsetY: 0, zoom: 1 });
+    changed();
+  },
+};
+
+/**
+ * Passport context view (whole photo around a fixed frame) for the shown preview, or null for the plain
+ * view: needs `passport.source` from the server and the pre-passport image the preview was made from.
+ * `pending` is what the settings changed since that preview (drag, keys, wheel, sliders), shown live.
+ */
+function contextFor(f) {
+  if (!panFor(f)) return null;
+  const pp = f.preview.passport;
+  const fr = f.previewFraming;
+  if (!fr || !isSourceFrame(pp.source)) return null;
+  const ops = prePassportOps(f);
+  if (!ops || JSON.stringify(ops) !== fr.baseKey) return null; // edits before the frame changed: wait for both renders
+  const base = opsBase(f, 'passportBase', ops);
+  if (!base) return null;
+  const p = state.passport;
+  return {
+    src: base.src,
+    source: pp.source,
+    out: { w: pp.width, h: pp.height },
+    pending: { fx: p.offsetX - fr.offsetX, fy: p.offsetY - fr.offsetY, r: fr.zoom > 0 ? p.zoom / fr.zoom : 1 },
+    pivot: zoomPivot(pp, fr.offsetX, fr.offsetY),
+  };
+}
+
+/** The photo can be dragged into place while the shown preview is a single passport frame. */
+function panFor(f) {
+  return Boolean(f?.preview?.passport && !comparing && state.tool === 'passport' && passportActive() && state.passport.layout === 'single');
 }
 
 /** Passport guides for the shown preview: Passport tool open, "Show guides" on, single photo measured. */
@@ -385,6 +468,7 @@ async function runPreview() {
     if (my !== pvSeq) return;
     f.preview = res;
     f.previewKey = key;
+    f.previewFraming = framingOf(req.ops); // what the passport context view measures pending moves against
     f.previewError = null;
     if (f.id === state.activeId) {
       renderCanvas();
@@ -689,7 +773,7 @@ async function addFiles(list) {
 
   for (const info of added) {
     if (state.files.some((f) => f.id === info.id)) continue;
-    state.files.push({ id: info.id, name: info.name, info, crop: null, preview: null, previewKey: null, previewError: null, cropBase: null, cropBasePending: null, full: null });
+    state.files.push({ id: info.id, name: info.name, info, crop: null, preview: null, previewKey: null, previewFraming: null, previewError: null, cropBase: null, cropBasePending: null, passportBase: null, passportBasePending: null, full: null });
   }
   if (added.length) {
     state.activeId = null;

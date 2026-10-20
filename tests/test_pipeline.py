@@ -342,7 +342,7 @@ def test_sheet_dpi_resolution(monkeypatch, src_dpi, explicit, expected):
 # ------------------------------------------------------------------ v1.1: passport guides (VIS-9 / C2), level (C4)
 FACE_INFO = {"face_found": True, "head_ratio": 0.594, "eye_from_bottom": 0.62, "roll_deg": 3.2,
              "face_box_out": {"box": [200, 100, 200, 260], "crown_y": 52.0, "chin_y": 409.0, "eye_y": 228.0,
-                              "center_x": 300.0}}
+                              "center_x": 300.0, "top_y": 41.5}}
 
 
 def test_passport_guides_shape(monkeypatch):
@@ -355,11 +355,47 @@ def test_passport_guides_shape(monkeypatch):
     assert guides == {
         "preset": "us", "width": 600, "height": 600, "head_ratio": 0.594, "eye_from_bottom": 0.62,
         "face_found": True, "roll_deg": 3.2, "lines": {"crown": 52.0, "chin": 409.0, "eye": 228.0},
+        "hair_top": 41.5,
         "bands": {"head_min": 0.5, "head_max": 0.6875, "eye_min": 0.5625, "eye_max": 0.6875,
                   "top_min": None, "top_max": None},
-        "background_edit_allowed": guides["background_edit_allowed"],
+        "background_edit_allowed": guides["background_edit_allowed"], "source": None,
     }
     assert isinstance(guides["background_edit_allowed"], bool)
+    # without a hair top in the face box (older make() info) the field is null, never a guess
+    no_hair = {**FACE_INFO, "face_box_out": {k: v for k, v in FACE_INFO["face_box_out"].items() if k != "top_y"}}
+    monkeypatch.setattr(passport, "make", _fake_make(no_hair))
+    assert pipeline.passport_guides(pipeline.run(load(quadrants()), [{"op": "passport", "preset": "us"}]))[
+        "hair_top"] is None
+
+
+def test_passport_guides_carry_the_source_frame(monkeypatch):
+    """Context view: ``source`` is make()'s source_frame as plain JSON numbers; malformed → None."""
+    frame = {"width": np.int64(400), "height": 500, "center": (np.float64(210.5), 260.25),
+             "size": [300.0, 300.0], "angle": np.float32(2.5)}
+    monkeypatch.setattr(passport, "analyze", lambda img, *a, **kw: {})
+    monkeypatch.setattr(passport, "make", _fake_make({**FACE_INFO, "source_frame": frame}))
+    guides = pipeline.passport_guides(pipeline.run(load(quadrants()), [{"op": "passport", "preset": "us"}]))
+    assert guides["source"] == {"width": 400, "height": 500, "center": [210.5, 260.25], "size": [300.0, 300.0],
+                                "angle": 2.5}
+    assert all(type(v) is float for v in guides["source"]["center"] + guides["source"]["size"])
+    assert type(guides["source"]["width"]) is int and type(guides["source"]["angle"]) is float
+    for bad in ({"width": 1}, {**frame, "center": [1.0]}, {**frame, "size": None}, "frame"):
+        monkeypatch.setattr(passport, "make", _fake_make({**FACE_INFO, "source_frame": bad}))
+        assert pipeline.passport_guides(pipeline.run(load(quadrants()), [{"op": "passport", "preset": "us"}]))[
+            "source"] is None
+
+
+def test_passport_source_frame_refers_to_the_image_entering_the_op(monkeypatch):
+    """Real make(): the source size is the result of the preceding ops (here rotated 90° → 100×200)."""
+    monkeypatch.setattr(passport, "analyze", lambda img, *a, **kw: passport.Analysis([], None, img.size))
+    ops = [{"op": "rotate", "angle": 90}, {"op": "passport", "preset": "us", "zoom": 1.25, "offset_y": 0.1}]
+    ctx = pipeline.run(load(quadrants(200, 100)), ops)
+    source = pipeline.passport_guides(ctx)["source"]
+    # Centred square crop of the 100×200 image, 80 px at zoom 1.25, subject moved down by 0.1 · 80 px.
+    assert source == {"width": 100, "height": 200, "center": [50.0, 92.0], "size": [80.0, 80.0], "angle": 0.0}
+    assert ctx.meta["passport"]["source_frame"] == source
+    kept = pipeline.run(load(quadrants(200, 100)), [*ops, {"op": "adjust", "brightness": 1.2}])
+    assert pipeline.passport_guides(kept)["source"] == source
 
 
 def test_passport_guides_without_face_have_no_lines(monkeypatch):
@@ -367,6 +403,7 @@ def test_passport_guides_without_face_have_no_lines(monkeypatch):
     monkeypatch.setattr(passport, "make", _fake_make())
     guides = pipeline.passport_guides(pipeline.run(load(quadrants()), [{"op": "passport", "preset": "us"}]))
     assert guides is not None and guides["face_found"] is False and guides["lines"] is None
+    assert guides["hair_top"] is None
     assert pipeline.passport_guides(pipeline.run(load(quadrants()), [])) is None
 
 

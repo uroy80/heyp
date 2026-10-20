@@ -43,7 +43,7 @@ export const defaults = {
 
 export const state = {
   tool: 'convert',
-  /** @type {Array<{id:string,name:string,info:object,crop:object|null,preview:object|null,previewKey:string|null,cropBase:object|null,full:object|null}>} */
+  /** @type {Array<{id:string,name:string,info:object,crop:object|null,preview:object|null,previewKey:string|null,previewFraming:object|null,cropBase:object|null,passportBase:object|null,full:object|null}>} */
   files: [],
   activeId: null,
   features: { heic: true, avif: true, face: true, segmentation: false },
@@ -266,6 +266,24 @@ function passportOp() {
 
 /** Passport framing applies (on, a preset chosen, and custom sizes valid). */
 export const passportActive = () => state.passport.on && Boolean(state.passport.preset) && (state.passport.preset !== 'custom' || Boolean(passportDims()));
+
+/**
+ * The passport op's framing in an op list ({zoom, offsetX, offsetY}) plus `baseKey`, the JSON of the ops
+ * before it (the image the passport frame is placed on); null without a passport op.
+ */
+export function framingOf(ops) {
+  const i = (ops || []).findIndex((o) => o?.op === 'passport');
+  if (i < 0) return null;
+  const o = ops[i];
+  return { zoom: o.zoom ?? 1, offsetX: o.offset_x ?? 0, offsetY: o.offset_y ?? 0, baseKey: JSON.stringify(ops.slice(0, i)) };
+}
+
+/** Ops before the passport op (what the passport context view shows around the frame); null when inactive. */
+export function prePassportOps(file) {
+  const ops = buildOps(file);
+  const i = ops.findIndex((o) => o.op === 'passport');
+  return i < 0 ? null : ops.slice(0, i);
+}
 
 export function buildOps(file) {
   const ops = preCropOps(file);

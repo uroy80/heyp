@@ -23,6 +23,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     ORT_DISABLE_TELEMETRY=1 \
     HEYP_MODELS_DIR=/opt/heyp/models
 WORKDIR /app
+# gifsicle (GPL-2.0) and pngquant (GPL-3.0) run as separate programs: animated-GIF and PNG compression.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gifsicle pngquant \
+ && rm -rf /var/lib/apt/lists/*
 COPY requirements.lock .
 # numpy's own test suite (~16 MB) is never imported; removing it in the same layer keeps it out of the image.
 RUN pip install --require-hashes --no-deps -r requirements.lock \

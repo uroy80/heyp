@@ -2,11 +2,15 @@
 
 import { h, fmtNum, posInt, append } from '../dom.js';
 import { state, defaults, findPreset, passportDims, shortPresetName } from '../state.js';
-import { toolHead, group, segmented, slider, toggle, selectField, fillSelect, numberField, swatches, note } from '../controls.js';
+import { toolHead, group, segmented, slider, toggle, selectField, fillSelect, numberField, swatches, note, quickChips } from '../controls.js';
 import { icon } from '../icons.js';
 
 /** Copies per print sheet the server accepts (schemas.SheetOp.copies). */
 const MAX_COPIES = 200;
+
+/** One-click documents offered above the full list (the viewer's own country goes first). */
+const POPULAR = ['us', 'uk', 'schengen', 'in', 'ca', 'au', 'cn', 'jp'];
+const QUICK_PICKS = 6;
 
 const BACKGROUNDS = [
   { value: '#ffffff', label: 'White' },
@@ -158,6 +162,7 @@ export default {
       if (!id) return;
       if (id !== p.preset) choosePreset(p, id);
       p.on = true;
+      p.dismissed = false;
       query = '';
       app.changed({ panel: true });
     };
@@ -187,34 +192,43 @@ export default {
     r.empty = h('p', { class: 'hint', hidden: matches() > 0 }, 'No presets match — try a country name or “visa”.');
 
     const preset = p.preset === 'custom' ? null : findPreset(p.preset);
-    const meta = h('div', { class: 'preset-card' });
     const dims = passportDims();
-    if (preset) {
-      append(meta,
-        h('p', { class: 'preset-dims' },
-          h('strong', {}, `${fmtNum(preset.width_mm, 1)} × ${fmtNum(preset.height_mm, 1)} mm`),
-          dims ? h('span', { class: 'muted' }, ` · ${dims.w}\u00a0×\u00a0${dims.h}\u00a0px · ${preset.dpi}\u00a0DPI`) : null),
-        preset.notes ? h('p', { class: 'preset-notes' }, preset.notes) : null,
-        safeUrl(preset.source) ? h('a', { class: 'ext-link', href: safeUrl(preset.source), target: '_blank', rel: 'noopener noreferrer' }, 'Official spec', h('span', { 'aria-hidden': 'true' }, ' ↗'), h('span', { class: 'sr-only' }, ' (opens in a new tab)')) : null,
-      );
-    } else if (p.preset === 'custom') {
+    // the size at a glance stays under the picker; the long rules fold away at the bottom
+    const dimsLine = preset ? h('p', { class: 'preset-dims' },
+      h('strong', {}, `${fmtNum(preset.width_mm, 1)} × ${fmtNum(preset.height_mm, 1)} mm`),
+      dims ? h('span', { class: 'muted' }, ` · ${dims.w}\u00a0×\u00a0${dims.h}\u00a0px · ${preset.dpi}\u00a0DPI`) : null) : null;
+    const rules = preset && (preset.notes || safeUrl(preset.source)) ? h('details', { class: 'disclosure pp-rules' },
+      h('summary', {}, 'Rules for this document'),
+      preset.notes ? h('p', { class: 'preset-notes' }, preset.notes) : null,
+      safeUrl(preset.source) ? h('a', { class: 'ext-link', href: safeUrl(preset.source), target: '_blank', rel: 'noopener noreferrer' }, 'Official spec', h('span', { 'aria-hidden': 'true' }, ' ↗'), h('span', { class: 'sr-only' }, ' (opens in a new tab)')) : null) : null;
+    let custom = null;
+    if (p.preset === 'custom') {
       const c = p.custom;
-      const upd = (k) => (v) => { c[k] = v; p.on = true; app.changed(); };
-      append(meta, h('div', { class: 'grid-3' },
+      const upd = (k) => (v) => { c[k] = v; p.on = true; p.dismissed = false; app.changed(); };
+      custom = h('div', { class: 'preset-card' }, h('div', { class: 'grid-3' },
         numberField({ label: 'Width', value: c.width_mm, suffix: 'mm', min: 10, max: 300, onChange: upd('width_mm') }),
         numberField({ label: 'Height', value: c.height_mm, suffix: 'mm', min: 10, max: 300, onChange: upd('height_mm') }),
         numberField({ label: 'DPI', value: c.dpi, step: 1, min: 72, max: 2400, onChange: upd('dpi') })),
       h('p', { class: 'hint' }, 'Head height defaults to about 50–69 % of the photo, like most ICAO-style specs.'));
       r.customHint = note('Enter a width, height and DPI to apply the custom size.', 'warn');
-      append(meta, r.customHint);
+      append(custom, r.customHint);
     }
 
-    append(root, group(null, search, r.select, r.empty, meta));
+    // one-click documents: picking one starts the passport photo straight away
+    const own = guessPreset(state.presets);
+    const quick = [...new Set([own, ...POPULAR])].map(findPreset).filter(Boolean).slice(0, QUICK_PICKS);
+    const chipLabel = (x) => (x.country === 'EU' ? 'Schengen / EU' : countryName(x.country) || shortPresetName(x));
+    const chips = quick.length ? h('div', { class: 'pp-quick' }, h('p', { class: 'hint' }, 'Popular'),
+      quickChips(quick.map((x) => ({ value: x.id, label: chipLabel(x), active: false })), pick, { label: 'Popular documents' })) : null;
 
     if (!p.on) {
-      // acts on the preset the dropdown shows, never a stale one hidden by the search
-      r.make = h('button', { type: 'button', class: 'btn btn-primary btn-block', disabled: !r.select.select.value, onclick: () => pick(r.select.select.value) }, icon('passport', 18), h('span', {}, 'Make passport photo'));
-      append(root, r.make);
+      // the choice comes first: pick a document (chip or list) — or confirm the one shown — and the photo is framed
+      r.make = h('button', { type: 'button', class: 'btn btn-primary btn-block pp-make', disabled: !r.select.select.value, onclick: () => pick(r.select.select.value) },
+        icon('passport', 18), h('span', {}, 'Make passport photo'));
+      // picker + action first so they sit above the pinned Export block; quick picks and search below
+      append(root,
+        group('Choose your document', r.select, dimsLine, custom, r.make, chips, search, r.empty),
+        rules);
       this.sync(app);
       return;
     }
@@ -222,7 +236,7 @@ export default {
     const defBg = preset?.background || '#ffffff';
     const seg = state.features.segmentation;
     const rule = backgroundRule(preset);
-    const bg = swatches({ label: 'Background', colors: BACKGROUNDS, value: p.background ?? defBg, defaultValue: defBg, onChange: (v) => { p.background = v; app.changed(); } });
+    const bg = swatches({ label: 'Colour', colors: BACKGROUNDS, value: p.background ?? defBg, defaultValue: defBg, onChange: (v) => { p.background = v; app.changed(); } });
     const replace = toggle({
       label: 'Replace background', checked: p.replace && seg, disabled: !seg,
       hint: !seg ? 'Needs the segmentation model, which isn’t available in this build — the original background is kept.'
@@ -233,10 +247,12 @@ export default {
 
     const vpos = (v) => (Math.abs(v) < 0.001 ? 'Centred' : `${v > 0 ? '↑' : '↓'} ${Math.round(Math.abs(v) * 100)}%`);
     const hpos = (v) => (Math.abs(v) < 0.001 ? 'Centred' : `${v > 0 ? '→' : '←'} ${Math.round(Math.abs(v) * 100)}%`);
+    r.zoom = slider({ label: 'Head size', min: 0.85, max: 1.15, step: 0.005, value: p.zoom, resetTo: 1, format: (v) => `${Math.round(v * 100)}%`, onInput: (v) => { p.zoom = v; app.changed(); } });
+    r.vpos = slider({ label: 'Vertical position', min: -0.25, max: 0.25, step: 0.005, value: -p.offsetY, resetTo: 0, format: vpos, onInput: (v) => { p.offsetY = -v; app.changed(); } });
+    r.hpos = slider({ label: 'Horizontal position', min: -0.25, max: 0.25, step: 0.005, value: p.offsetX, resetTo: 0, format: hpos, onInput: (v) => { p.offsetX = v; app.changed(); } });
     const tune = group('Fine-tune',
-      slider({ label: 'Head size', min: 0.85, max: 1.15, step: 0.01, value: p.zoom, resetTo: 1, format: (v) => `${Math.round(v * 100)}%`, onInput: (v) => { p.zoom = v; app.changed(); } }),
-      slider({ label: 'Vertical position', min: -0.15, max: 0.15, step: 0.005, value: -p.offsetY, resetTo: 0, format: vpos, onInput: (v) => { p.offsetY = -v; app.changed(); } }),
-      slider({ label: 'Horizontal position', min: -0.15, max: 0.15, step: 0.005, value: p.offsetX, resetTo: 0, format: hpos, onInput: (v) => { p.offsetX = v; app.changed(); } }),
+      h('p', { class: 'hint pp-drag-hint' }, 'Drag the photo to move it under the frame, scroll or pinch to resize the head, double-click to reset.'),
+      r.zoom, r.vpos, r.hpos,
       toggle({ label: 'Level head', checked: p.level !== false, hint: 'Straightens a tilted head (1–15°) using the eye line.', onChange: (v) => { p.level = v; app.changed(); } }));
 
     r.guides = toggle({ label: 'Show guides', checked: p.guides !== false, hint: 'Crown, chin and eye lines with the allowed ranges, drawn over the photo.', onChange: (v) => { p.guides = v; app.changed({ preview: false }); } });
@@ -257,13 +273,22 @@ export default {
       );
     }
 
-    append(root, group(null, bg, replace, ruleNote), check, tune, out,
-      h('button', { type: 'button', class: 'link-btn', onclick: () => { p.on = false; app.changed({ panel: true }); } }, 'Turn off passport framing'));
+    // most-used first: document, what to print, background; checks and fine-tuning below; the rules fold away
+    append(root,
+      group('Document', r.select, dimsLine, custom),
+      out,
+      group('Background', bg, replace, ruleNote),
+      check, tune, rules,
+      h('button', { type: 'button', class: 'link-btn', onclick: () => { p.on = false; p.dismissed = true; app.changed({ panel: true }); } }, 'Turn off passport framing'));
     this.sync(app);
   },
 
   sync(app) {
     if (r.customHint) r.customHint.hidden = Boolean(passportDims());
+    const p = state.passport; // drag / wheel / keys on the photo change these too — keep the sliders in step
+    r.zoom?.set(p.zoom);
+    r.vpos?.set(-p.offsetY);
+    r.hpos?.set(p.offsetX);
     if (!r.measure) return;
     const pp = app?.lastPreview()?.passport;
     const single = state.passport.layout === 'single';

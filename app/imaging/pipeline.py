@@ -400,7 +400,8 @@ def _passport(ctx: Ctx, op: PassportOp, prefix: Sequence[BaseModel]) -> None:
 
 
 def _guides(preset: presets.PassportPreset, info: dict, size: tuple[int, int]) -> dict:
-    """The preview's ``passport`` object: measurements, guide lines (output px) and preset bands.
+    """The preview's ``passport`` object: measurements, guide lines (output px) and preset bands,
+    plus ``source`` (the frame on the image entering the op, for the UI's context view).
 
     ``lines``/``bands`` come from passport.make's info when it reports them, else from the
     face box and the preset.
@@ -425,14 +426,33 @@ def _guides(preset: presets.PassportPreset, info: dict, size: tuple[int, int]) -
         "face_found": face_found,
         "roll_deg": _float(info.get("roll_deg")),
         "lines": {k: float(lines[k]) for k in ("crown", "chin", "eye")} if lines else None,
+        # top of the hair (output px; differs from the crown line when the preset excludes hair): the UI
+        # predicts where a head-size change re-frames the photo (PLAN §5.3 step 3)
+        "hair_top": _float(box.get("top_y")) if lines and isinstance(box, dict) else None,
         "bands": {k: _float(bands.get(k)) for k in ("head_min", "head_max", "eye_min", "eye_max", "top_min", "top_max")},
         "background_edit_allowed": bool(info.get("background_edit_allowed",
                                                  getattr(preset, "background_edit_allowed", True))),
+        "source": _source_frame(info.get("source_frame")),
     }
 
 
 def _float(value: Any) -> float | None:
     return None if value is None else float(value)
+
+
+def _source_frame(value: Any) -> dict | None:
+    """passport.make's ``source_frame``: where the frame sits on the image entering the passport op
+    (its full-resolution size, frame centre/size in its px, clockwise angle), or None."""
+    if not isinstance(value, dict):
+        return None
+    try:
+        center, size = [float(v) for v in value["center"]], [float(v) for v in value["size"]]
+        if len(center) != 2 or len(size) != 2:
+            return None
+        return {"width": int(value["width"]), "height": int(value["height"]),
+                "center": center, "size": size, "angle": float(value.get("angle") or 0.0)}
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def sheet_dpi(op: SheetOp, pipeline_dpi: tuple[float, float] | None) -> int:

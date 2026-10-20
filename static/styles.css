@@ -56,6 +56,7 @@
   --danger-wash: color-mix(in srgb, var(--danger) 8%, var(--sheet));
   --checker:     #e2dccf;
   --shade:       color-mix(in srgb, var(--paper) 72%, transparent);  /* crop: knocked-back paper wash */
+  --veil:        color-mix(in srgb, var(--canvas) 60%, transparent); /* passport: photo around the frame */
   --scrim:       rgb(20 18 16 / 0.42);
   --rule-ink:    var(--ink);
 
@@ -151,6 +152,7 @@
     --focus:   #ff5e52;
     --checker: #24221e;
     --shade:   color-mix(in srgb, var(--paper) 74%, transparent);
+    --veil:    color-mix(in srgb, var(--canvas) 64%, transparent);
     --scrim:   rgb(0 0 0 / 0.6);
     --shadow-1: 0 1px 0 rgb(0 0 0 / 0.4);
     --shadow-2: 0 2px 0 rgb(0 0 0 / 0.5), 0 12px 32px rgb(0 0 0 / 0.5);
@@ -176,6 +178,7 @@
   --focus:   #ff5e52;
   --checker: #24221e;
   --shade:   color-mix(in srgb, var(--paper) 74%, transparent);
+  --veil:    color-mix(in srgb, var(--canvas) 64%, transparent);
   --scrim:   rgb(0 0 0 / 0.6);
   --shadow-1: 0 1px 0 rgb(0 0 0 / 0.4);
   --shadow-2: 0 2px 0 rgb(0 0 0 / 0.5), 0 12px 32px rgb(0 0 0 / 0.5);
@@ -1426,3 +1429,66 @@ input[type="search"]::-webkit-search-cancel-button:hover { background: var(--ink
   /* app.js pinPanelOnPhones() keeps the panel in place when the caption/chips/strip resize; native anchoring would double it */
   html { overflow-anchor: none; }
 }
+
+/* drag-to-align (passport) */
+.stage.is-pannable { touch-action: none; }
+.stage.is-pannable .view { cursor: grab; }
+.stage.is-panning .view { cursor: grabbing; }
+.stage.is-pannable:focus-visible:not(.pointer-focus) { outline: 2px solid var(--focus, var(--accent)); outline-offset: -2px; }
+/* a mouse/touch drag after a key nudge keeps :focus-visible; the ring returns with the next key */
+.stage.is-pannable.pointer-focus:focus-visible { outline: none; }
+.pp-drag-hint { margin: 0 0 8px; }
+
+/* passport context view: the whole photo under a fixed frame, knocked back outside it by the veil
+   (the well colour, so it reads as the page in both editions); a hairline ink trim with printer's
+   crop marks. The finished preview fills the frame and fades out while the photo moves under it. */
+.pp-context {
+  position: absolute; left: 0; top: 0; max-width: none;
+  transform-origin: 0 0;
+  pointer-events: none; user-select: none; -webkit-user-drag: none;
+  opacity: 0; transition: opacity var(--t) var(--ease);
+}
+/* At rest only the finished photo shows; grabbing / zooming / nudging brings up the surroundings. */
+.stage.is-context .img-frame {
+  background: none;
+  box-shadow: 0 0 0 1px transparent, 0 0 0 200vmax transparent;
+  transition: box-shadow var(--t) var(--ease);
+}
+.stage.is-context.is-surround .pp-context { opacity: 1; }
+.stage.is-context.is-surround .img-frame {
+  box-shadow: 0 0 0 1px var(--ink), 0 0 0 200vmax var(--veil);
+}
+.stage.is-context .img-frame::before { opacity: 0; transition: opacity var(--t) var(--ease); }
+.stage.is-context.is-surround .img-frame::before { opacity: 1; }
+.stage.is-context .img-frame::before {
+  content: ""; position: absolute; inset: -14px; pointer-events: none;
+  --m: linear-gradient(var(--ink), var(--ink));
+  background:
+    var(--m) left 0 top 13px / 10px 1px, var(--m) left 13px top 0 / 1px 10px,
+    var(--m) right 0 top 13px / 10px 1px, var(--m) right 13px top 0 / 1px 10px,
+    var(--m) left 0 bottom 13px / 10px 1px, var(--m) left 13px bottom 0 / 1px 10px,
+    var(--m) right 0 bottom 13px / 10px 1px, var(--m) right 13px bottom 0 / 1px 10px;
+  background-repeat: no-repeat;
+}
+.stage.is-context .view { transition: opacity var(--t) var(--ease); }
+.stage.is-context.is-moved .view { opacity: 0; }
+.stage.is-pannable.is-context { cursor: grab; }
+.stage.is-panning.is-context, .stage.is-panning.is-context .view { cursor: grabbing; }
+@media (forced-colors: active) {
+  .stage.is-context .img-frame { outline: 1px solid CanvasText; }
+}
+
+/* the ":)" in the nameplate — set in the editor's red, a touch lighter so "heyp" still leads */
+.wordmark .smile {
+  color: var(--accent);
+  font-weight: 560;
+  letter-spacing: -0.06em;
+  white-space: nowrap;
+}
+.brand:hover .wordmark .smile { color: var(--ink); }
+
+/* passport: document chooser first, the rules folded away */
+.pp-make { margin-top: 4px; }
+.pp-rules .preset-notes { margin: 8px 0 6px; }
+.pp-quick { display: grid; gap: 6px; margin-top: 6px; }
+.pp-quick .hint { margin: 0; }
