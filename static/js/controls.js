@@ -49,6 +49,7 @@ export function slider({ label, min, max, step, value, format = String, onInput,
   const paint = () => {
     const v = Number(input.value);
     out.textContent = format(v);
+    input.setAttribute('aria-valuetext', out.textContent); // "+50", "60%", "↓ 7%" — not the raw 1.5 / 0.6 / 0.07
     input.style.setProperty('--p', `${((v - min) / (max - min)) * 100}%`);
     if (resetBtn) resetBtn.hidden = resetTo == null || v === resetTo;
   };

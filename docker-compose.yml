@@ -1,3 +1,18 @@
+# Local / self-hosted heyp, built from this checkout.
+#
+#   docker compose up -d --build                     # the app: http://127.0.0.1:8080
+#   docker compose --profile render up -d --build    # + HTML → image (renderer + egress proxy)
+#
+# The HTML → image tool reports "available: false" in the UI while the renderer is not running. Public hosting uses
+# deploy/compose.prod.yml instead (published images, hosted mode, proxy, limits): see deploy/DEPLOY.md.
+name: heyp
+
+x-logging: &logging
+  driver: local
+  options:
+    max-size: 10m
+    max-file: "3"
+
 services:
   heyp:
     build:
@@ -10,15 +25,25 @@ services:
       # trusted LAN, opt in with HEYP_BIND=0.0.0.0 (e.g. in .env).
       - "${HEYP_BIND:-127.0.0.1}:${HEYP_PORT:-8080}:8080"
     environment:
+      HEYP_MODE: "${HEYP_MODE:-local}"
+      # HEYP_MODE=hosted refuses to start without these (privacy policy, terms)
+      HEYP_PUBLIC_URL: "${HEYP_PUBLIC_URL:-}"
+      HEYP_OPERATOR_NAME: "${HEYP_OPERATOR_NAME:-}"
+      HEYP_OPERATOR_EMAIL: "${HEYP_OPERATOR_EMAIL:-}"
       HEYP_MAX_UPLOAD_MB: "${HEYP_MAX_UPLOAD_MB:-100}"
       HEYP_MAX_FILES: "${HEYP_MAX_FILES:-200}"
       HEYP_MAX_PIXELS: "${HEYP_MAX_PIXELS:-50000000}"
       HEYP_TTL_MINUTES: "${HEYP_TTL_MINUTES:-60}"
+      HEYP_HARD_TTL_MINUTES: "${HEYP_HARD_TTL_MINUTES:-}" # empty = automatic (off in local mode)
       HEYP_MAX_JOBS: "${HEYP_MAX_JOBS:-2}"
       HEYP_CACHE_MB: "${HEYP_CACHE_MB:-512}"
       HEYP_ALLOW_CROSS_ORIGIN: "${HEYP_ALLOW_CROSS_ORIGIN:-0}"
       HEYP_DOCS: "${HEYP_DOCS:-0}"
-    # Memory budget (measured): ~0.45 GB process + ONNX models, up to ~0.9 GB of caches (HEYP_CACHE_MB
+      HEYP_TRUSTED_PROXIES: "${HEYP_TRUSTED_PROXIES:-127.0.0.1/32}"
+      HEYP_RENDERER_SOCKET: /run/renderer/r.sock
+      # heypdf, the PDF toolbox, for the "heyp · heypdf" switch and /pdf/* redirects ("off" hides the link)
+      HEYP_SIBLING_URL: "${HEYP_SIBLING_URL:-http://localhost:8081}"
+    # Memory budget (measured): ~0.65 GB process with the ONNX models, up to ~0.9 GB of caches (HEYP_CACHE_MB
     # plus the mask/analysis caches), whatever /tmp holds (RAM-backed, charged here), and per running job
     # (HEYP_MAX_JOBS) about 0.8 GB for a 12 MP photo up to ~1.9 GB for a 50 MP one (HEYP_MAX_PIXELS;
     # background removal is the worst case). 4g fits two concurrent 50 MP background removals (peak
@@ -32,6 +57,69 @@ services:
       # Uploads (each <= HEYP_MAX_UPLOAD_MB) and ZIP spools (>32 MB) live here: 1g holds ten max-size
       # uploads, or a batch of ~100 phone photos plus its ZIP. When full, requests get 507, not an OOM kill.
       - "/tmp:size=${HEYP_TMP_SIZE:-1g}"
+    volumes:
+      - render-sock:/run/renderer
     security_opt:
       - no-new-privileges:true
+    cap_drop: [ALL]
+    logging: *logging
     restart: unless-stopped
+
+  renderer:
+    profiles: [render]
+    build:
+      context: services/renderer
+    image: heyp-renderer:latest
+    environment:
+      HOME: /tmp
+      HEYP_RENDER_SOCKET: /run/renderer/r.sock
+      HEYP_RENDER_EGRESS_HOST: egress
+      HEYP_RENDER_EGRESS_SECRET: "${HEYP_EGRESS_SECRET:-heyp-local-only-change-me}"
+      HEYP_RENDER_MAX_CONCURRENT: "1"
+      HEYP_RENDER_CHROMIUM_SANDBOX: "1"
+    read_only: true
+    tmpfs:
+      - "/tmp:size=512m,mode=1777"
+    volumes:
+      - render-sock:/run/renderer
+    mem_limit: 1536m
+    pids_limit: 512
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./deploy/seccomp/chromium-userns.json
+    logging: *logging
+    restart: unless-stopped
+    networks: [render-sbx]
+
+  egress:
+    profiles: [render]
+    build:
+      context: services/egress
+    image: heyp-egress:latest
+    environment:
+      HEYP_EGRESS_SECRET: "${HEYP_EGRESS_SECRET:-heyp-local-only-change-me}"
+      HEYP_EGRESS_SLOTS: "1"
+      HEYP_EGRESS_ALLOW_PORTS: "80,443"
+      HEYP_EGRESS_DENY_CIDRS: "${HEYP_EGRESS_DENY_CIDRS:-}"
+      HEYP_EGRESS_DENY_LOCAL_NETS: "1"
+      HEYP_EGRESS_LOG_HOSTS: "0" # never log capture destinations
+    read_only: true
+    mem_limit: 128m
+    pids_limit: 64
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+    restart: unless-stopped
+    networks: [render-sbx, egress-wan]
+
+networks:
+  render-sbx:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated # Docker Engine >= 28
+  egress-wan: {}
+
+volumes:
+  render-sock: {}

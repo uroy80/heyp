@@ -1,13 +1,20 @@
-"""Pydantic v2 request models (PLAN.md §3). Ops form a discriminated union on ``"op"``."""
+"""Pydantic v2 request models (PLAN.md §3). Ops form a discriminated union on ``"op"``.
+
+The union is built from the image-op registry (``app.imaging.opreg``, PLAN.md §3 "Ops"): every
+plug-in in ``app/imaging/ops_ext/`` is imported first, then ``Op`` covers all registered op models plus
+the v1 models below for any op no plug-in has taken over yet (the v1 compatibility shim — the pipeline
+registers their v1 handlers as fallbacks). The v1 JSON is unchanged.
+"""
 from __future__ import annotations
 
 import math
 import re
 from typing import Annotated, Literal, Union
 
-from PIL import ImageColor
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, Field, TypeAdapter, field_validator, model_validator
 
+from app.imaging import opreg
+from app.imaging.opreg import Color, OpModel, _check_color  # noqa: F401  (re-exported for v1 imports)
 from app.store import ID_RE, clean_name
 
 MAX_DIMENSION = 30_000
@@ -18,22 +25,6 @@ INPUT_FORMATS = ["heic", "heif", "jpeg", "png", "webp", "avif", "tiff", "bmp", "
 OUTPUT_FORMATS = ["jpeg", "png", "webp", "avif", "heic", "tiff", "bmp", "gif", "pdf"]
 _UNIT_PER_INCH = {"in": 1.0, "cm": 2.54, "mm": 25.4}
 _EXT_RE = re.compile(r"\.(jpe?g|png|webp|avif|heic|heif|tiff?|bmp|gif|pdf|zip)$", re.IGNORECASE)
-
-
-def _check_color(value: str) -> str:
-    value = value.strip()
-    if value.lower() == "transparent":
-        return "transparent"
-    try:
-        ImageColor.getrgb(value)
-    except ValueError:
-        raise ValueError(
-            f"invalid colour {value!r} (use #rgb, #rrggbb, #rrggbbaa, a CSS name or 'transparent')"
-        ) from None
-    return value
-
-
-Color = Annotated[str, Field(min_length=1, max_length=64), AfterValidator(_check_color)]
 
 
 def ratio_value(ratio: str | float) -> float:
@@ -63,8 +54,7 @@ def _check_ratio(value: str | float) -> str | float:
     return value
 
 
-class _Model(BaseModel):
-    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+_Model = OpModel  # extra="forbid", allow_inf_nan=False
 
 
 # ------------------------------------------------------------------ ops
@@ -240,12 +230,8 @@ class SheetOp(_Model):
     copies: int = Field(default=0, ge=0, le=200)
 
 
-Op = Annotated[
-    Union[RotateOp, FlipOp, CropOp, CropAspectOp, TrimOp, ResizeOp, PadOp, AdjustOp,
-          BackgroundOp, PassportOp, SheetOp],
-    Field(discriminator="op"),
-]
-OPS_ADAPTER: TypeAdapter[list[Op]] = TypeAdapter(list[Op])
+V1_OPS: tuple[type[BaseModel], ...] = (RotateOp, FlipOp, CropOp, CropAspectOp, TrimOp, ResizeOp, PadOp,
+                                        AdjustOp, BackgroundOp, PassportOp, SheetOp)
 
 
 # ------------------------------------------------------------------ output / request
@@ -296,6 +282,31 @@ def _check_id(value: str) -> str:
 
 FileId = Annotated[str, Field(max_length=32), AfterValidator(_check_id)]
 
+
+# ------------------------------------------------------------------ the Op union (from the registry)
+def _op_name(model: type[BaseModel]) -> str:
+    name = opreg._literal_name(model)
+    assert name is not None, model
+    return name
+
+
+def _build_union() -> tuple[type[BaseModel], ...]:
+    """Registered op models (v1 order first, then plug-ins by name) plus unclaimed v1 models."""
+    registered = {spec.name: spec.model for spec in opreg.all_ops()}
+    models = [registered.get(_op_name(m), m) for m in V1_OPS]
+    v1_names = {_op_name(m) for m in V1_OPS}
+    models += [registered[n] for n in sorted(registered) if n not in v1_names]
+    return tuple(models)
+
+
+opreg.load_plugins()  # every ops_ext module registers before the union exists
+OP_MODELS: tuple[type[BaseModel], ...] = _build_union()
+OP_NAMES: tuple[str, ...] = tuple(_op_name(m) for m in OP_MODELS)
+Op = Annotated[Union[OP_MODELS], Field(discriminator="op")]  # type: ignore[valid-type]
+OPS_ADAPTER: TypeAdapter[list[Op]] = TypeAdapter(list[Op])
+# A plug-in may replace a v1 model (e.g. rotate gains a field): app.schemas names follow the registry.
+(RotateOp, FlipOp, CropOp, CropAspectOp, TrimOp, ResizeOp, PadOp, AdjustOp, BackgroundOp, PassportOp,
+ SheetOp) = OP_MODELS[:len(V1_OPS)]
 
 OpList = Annotated[list[Op], Field(max_length=MAX_OPS)]
 

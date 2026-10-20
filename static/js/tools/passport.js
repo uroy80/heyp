@@ -97,6 +97,10 @@ export function choosePreset(p, id) {
   p.preset = id;
   p.background = null;
   p.replace = replaceAllowed(findPreset(id));
+  // a fine-tune was made against the previous document's head-size rules: the new one starts from its own framing
+  p.zoom = 1;
+  p.offsetX = 0;
+  p.offsetY = 0;
 }
 
 const pct = (v) => `${Math.round(v * 100)} %`;
@@ -251,7 +255,7 @@ export default {
     r.vpos = slider({ label: 'Vertical position', min: -0.25, max: 0.25, step: 0.005, value: -p.offsetY, resetTo: 0, format: vpos, onInput: (v) => { p.offsetY = -v; app.changed(); } });
     r.hpos = slider({ label: 'Horizontal position', min: -0.25, max: 0.25, step: 0.005, value: p.offsetX, resetTo: 0, format: hpos, onInput: (v) => { p.offsetX = v; app.changed(); } });
     const tune = group('Fine-tune',
-      h('p', { class: 'hint pp-drag-hint' }, 'Drag the photo to move it under the frame, scroll or pinch to resize the head, double-click to reset.'),
+      h('p', { class: 'hint pp-drag-hint' }, 'Drag the photo to move it under the frame, pinch or Ctrl + scroll to resize the head, double-click to reset.'),
       r.zoom, r.vpos, r.hpos,
       toggle({ label: 'Level head', checked: p.level !== false, hint: 'Straightens a tilted head (1–15°) using the eye line.', onChange: (v) => { p.level = v; app.changed(); } }));
 

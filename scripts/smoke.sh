@@ -68,8 +68,8 @@ mem, pids = s["mem_limit"], s["pids_limit"]
 flags = ["--read-only", f"--memory={mem}", f"--pids-limit={pids}"]
 flags += [f"--tmpfs={t}" for t in s["tmpfs"]] + [f"--security-opt={o}" for o in s["security_opt"]]
 flags += [f"--env={k}={v}" for k, v in env.items()]
-print(" ".join(flags))' <"$WORK/compose.json") || fail "compose defaults (loopback bind, cross-origin/docs off, limits)"
-ok "compose config: 127.0.0.1:8080, read-only, 4g mem + 1g /tmp, 50 MP / 2 jobs, cross-origin + docs off"
+print(" ".join(flags))' <"$WORK/compose.json") || fail "compose defaults (loopback bind, cross-origin/API docs off, limits)"
+ok "compose config: 127.0.0.1:8080, read-only, 4g mem + 1g /tmp, 50 MP / 2 jobs, cross-origin + API docs off"
 
 # --- start like compose -----------------------------------------------------------------------------
 # shellcheck disable=SC2086  # RUN_FLAGS is a space-separated flag list without embedded spaces
@@ -97,10 +97,76 @@ ok "uid 10001, read-only rootfs, no dotfiles in the image"
 # --- health -----------------------------------------------------------------------------------------
 req GET /api/health
 expect 200 "health"
-json 'f = d["features"]; assert d["status"] == "ok" and f and all(f.values()), d; print("     features", f)
+# The renderer is a separate service and is off in this single-container run; everything built into the image
+# (decoders, the image models) must be on.
+json 'f = d["features"]; print("     features", f)
+assert d["status"] == "ok" and f and all(v for k, v in f.items() if k != "renderer"), d
+assert f["renderer"] is False, d
 assert d["limits"]["max_pixels"] == 50_000_000, d' \
-  || fail "health features not all true: $(cat "$WORK/body")"
-ok "health: status ok, every feature true, max_pixels 50 MP"
+  || fail "health features: $(cat "$WORK/body")"
+ok "health: status ok, every built-in feature true (renderer off), max_pixels 50 MP"
+
+# --- pages: legal pages, config, tools, the /pdf/* redirect to heypdf ------------------------------------------
+req GET /api/config
+expect 200 "config"
+json 'assert d["mode"] == "local" and d["features"]["renderer"] is False and d["source_url"].startswith("https://"), d
+assert d["sibling_url"] == "http://localhost:8081", d' \
+  || fail "config: $(cat "$WORK/body")"
+for page in /privacy /terms /credits; do
+  req GET "$page"
+  expect 200 "$page"
+  grep -q 'class="lg-nameplate"' "$WORK/body" || fail "$page is not the legal page"
+  if grep -qE '\{\{|VERIFY' "$WORK/body"; then fail "$page has unrendered template text"; fi
+  if grep -qi '^set-cookie:' "$WORK/headers"; then fail "$page sets a cookie"; fi
+done
+grep -q "GNU Affero General Public License" "$WORK/body" || fail "/credits does not name the licence"
+req GET /
+expect 200 "/"
+grep -q 'heyp' "$WORK/body" || fail "/ is not the heyp page"
+req GET "/pdf/merge?x=1"
+expect 308 "/pdf/merge"
+[ "$(header location)" = "http://localhost:8081/merge?x=1" ] || fail "/pdf/merge redirects to '$(header location)'"
+req GET /api/tools
+expect 200 "tools"
+json 'ids = {t["id"] for t in d["tools"]}
+assert ids == {"img.process", "img.make_gif", "img.compress", "img.html_to_image", "img.upscale", "img.remove_background",
+               "img.blur"}, sorted(ids)
+off = {t["id"] for t in d["tools"] if not t["available"]}
+assert off == {"img.html_to_image"}, off' || fail "tools: $(head -c 400 "$WORK/body")"
+ok "/api/config, /privacy, /terms, /credits, /, /pdf/* -> heypdf, /api/tools (only HTML -> image off here)"
+
+# --- jobs: compress a photo (upload → job → result file → download) ---------------------------------------------
+docker exec "$NAME" python -c '
+import io, sys
+import numpy as np
+from PIL import Image
+x = np.linspace(0, 255, 800, dtype=np.float32)[None, :].repeat(600, 0)
+img = Image.fromarray(np.stack([x, x[::-1], np.full_like(x, 96)], -1).astype(np.uint8))
+buf = io.BytesIO()
+img.save(buf, "PNG")
+sys.stdout.buffer.write(buf.getvalue())' >"$WORK/job.png"
+req POST /api/files -F "files=@$WORK/job.png;type=image/png"
+expect 200 "PNG upload"
+JOB_INPUT=$(json 'f = d["files"][0]; assert f["kind"] == "image", f; print(f["id"])') || fail "upload: $(cat "$WORK/body")"
+req POST /api/jobs -H 'Content-Type: application/json' \
+  -d "{\"tool\":\"img.compress\",\"file_ids\":[\"$JOB_INPUT\"],\"options\":{}}"
+expect 202 "compress job"
+JOB_ID=$(json 'print(d["job_id"])')
+for _ in $(seq 1 60); do
+  req GET "/api/jobs/$JOB_ID"
+  expect 200 "job status"
+  STATUS=$(json 'print(d["status"])')
+  case "$STATUS" in done | failed | cancelled) break ;; esac
+  sleep 1
+done
+[ "$STATUS" = "done" ] || fail "compress job ended '$STATUS': $(cat "$WORK/body")"
+RESULT_ID=$(json 'f = d["result"]["files"][0]; assert f["kind"] == "image" and f["source"] == "result", f; print(f["id"])') \
+  || fail "compress result: $(cat "$WORK/body")"
+req GET "/api/files/$RESULT_ID/download"
+expect 200 "download"
+[ "$(head -c 4 "$WORK/body" | od -An -tx1 | tr -d ' \n')" = 89504e47 ] || fail "download is not a PNG"
+header content-disposition | grep -qi 'attachment' || fail "download has no attachment Content-Disposition"
+ok "img.compress job: PNG -> smaller PNG, downloaded ($(wc -c <"$WORK/body" | tr -d ' ') bytes)"
 
 # --- HEIC upload (EXIF orientation 6 -> displayed size swapped), convert, resize ---------------------
 docker exec "$NAME" python -c '
@@ -164,7 +230,7 @@ warnings=$(header x-heyp-warnings)
 case "$warnings" in *[Nn]o%20face*|*[Uu]navailable*) fail "passport warnings: $warnings" ;; esac
 ok "passport us + 4x6 sheet -> $(header x-heyp-width)x$(header x-heyp-height) $(header content-type)"
 
-# --- service hardening (CONTRACT v1.1 C6) --------------------------------------------------------------
+# --- service hardening --------------------------------------------------------------------------------
 req POST /api/files -H 'Origin: https://evil.example' -F "files=@$WORK/smoke.heic;type=image/heic"
 expect 403 "cross-origin upload"
 ok "cross-origin upload -> 403"

@@ -1,0 +1,198 @@
+# heyp — production stack (images from GHCR, never built on the server).
+#
+# heyp-deploy (deploy/heyp-deploy) runs this from releases/<commit>/ with, in this order:
+#   --env-file /etc/heyp/heyp.env        owner-edited settings (domain, operator, profiles)
+#   --env-file /srv/heyp/state/ci.env    optional HEYP_* values sent by CI from the PROD_ENV secret
+#   --env-file <release>/release.env     HEYP_TAG=sha-<commit> (written by heyp-deploy, never by hand)
+#
+#                 Apache on the host (deploy/apache/; Cloudflare in front)
+#                                  │ 127.0.0.1:${HEYP_PORT} → edge network (fixed subnet = HEYP_TRUSTED_PROXIES)
+#  ┌────────────────────────────── app ───────────────────────────────┐
+#  │ heyp UI/API, job runner, image engines and models                 │   (no outbound connections)
+#  └──────────────────────────────────┬───────────────────────────────┘
+#                                     │ Unix socket on the render-sock volume (no IP route at all)
+#                       ┌─────────────▼──── renderer ──────────────┐   ┌──── egress ─────┐
+#                       │ Chromium (Playwright), seccomp            │──▶│ policy proxy:    │──▶ internet
+#                       │ render-sbx (internal, isolated)           │   │ public IPs only  │   (egress-wan)
+#                       └───────────────────────────────────────────┘   └──────────────────┘
+#
+# Profiles (COMPOSE_PROFILES in /etc/heyp/heyp.env, comma-separated):
+#   (none)   the app only, on 127.0.0.1:${HEYP_PORT} for Apache
+#   render   HTML → image: renderer + egress (the only path from a browser to the internet)
+# The HTML → image tool reports "available: false" with a reason while the renderer is not running.
+#
+# Sizing (Hostinger KVM, 4 vCPU / 15 GB shared with other sites): the memory limits below add up to ~4.7 GB and the
+# CPU caps keep any one container from taking the whole machine. They are ceilings, not reservations (idle use is
+# ~0.8 GB). Keep swap off (uploads must stay in RAM; see legal/privacy.md).
+
+name: heyp
+
+x-logging: &logging
+  # Rotated, compressed, bounded: container logs never hold access logs (the app's is off in hosted mode).
+  driver: local
+  options:
+    max-size: 10m
+    max-file: "3"
+
+x-hardening: &hardening
+  read_only: true
+  restart: unless-stopped
+  init: true
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  logging: *logging
+
+x-health: &health
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 90s
+  start_interval: 2s # Docker Engine >= 25
+
+services:
+  app:
+    <<: *hardening
+    image: ${HEYP_REGISTRY:-ghcr.io/uroy80}/heyp:${HEYP_TAG:?HEYP_TAG is set by heyp-deploy}
+    # Loopback only: Apache on the host connects here.
+    ports:
+      - "${HEYP_BIND:-127.0.0.1}:${HEYP_PORT:-8180}:8080"
+    environment:
+      HEYP_MODE: hosted
+      HEYP_PUBLIC_URL: "${HEYP_PUBLIC_URL:-https://${HEYP_DOMAIN:?set HEYP_DOMAIN in /etc/heyp/heyp.env}}"
+      # heypdf, the PDF toolbox: the "heyp · heypdf" switch and the /pdf/* redirects point here ("off" hides them).
+      HEYP_SIBLING_URL: "${HEYP_SIBLING_URL:-https://heypdf.edgr.in}"
+      # Only the proxy's hop may set X-Forwarded-For (rate limits are keyed on the client IP). The default is the
+      # edge network below: Apache connects through the published port, so its connections arrive from that
+      # network's gateway. Behind a CDN, Apache turns the CDN's visitor header into that one hop
+      # (deploy/apache/ssl-heyp.conf).
+      HEYP_TRUSTED_PROXIES: "${HEYP_TRUSTED_PROXIES:-${HEYP_EDGE_SUBNET:-172.31.251.0/24}}"
+      HEYP_SOURCE_URL: "${HEYP_SOURCE_URL:-https://github.com/uroy80/heyp}"
+      # Files: idle TTL + hard TTL from upload (legal/privacy.md promises both).
+      HEYP_TTL_MINUTES: "${HEYP_TTL_MINUTES:-60}"
+      HEYP_HARD_TTL_MINUTES: "${HEYP_HARD_TTL_MINUTES:-240}"
+      HEYP_MAX_UPLOAD_MB: "${HEYP_MAX_UPLOAD_MB:-100}"
+      # Largest upload request (MiB); empty = automatic (257). Behind a CDN set it under the CDN's body cap
+      # (Cloudflare: 95): the UI then sizes its upload batches from it.
+      HEYP_MAX_REQUEST_MB: "${HEYP_MAX_REQUEST_MB:-}"
+      HEYP_MAX_FILES: "${HEYP_MAX_FILES:-50}"
+      HEYP_MAX_PIXELS: "${HEYP_MAX_PIXELS:-50000000}"
+      HEYP_MAX_JOBS: "${HEYP_MAX_JOBS:-2}"
+      HEYP_CACHE_MB: "${HEYP_CACHE_MB:-256}"
+      # Job lanes: one heavy model job (BiRefNet, upscaling) at a time.
+      HEYP_LANE_LIGHT: "${HEYP_LANE_LIGHT:-2}"
+      HEYP_LANE_HEAVY: "${HEYP_LANE_HEAVY:-1}"
+      HEYP_LANE_RENDER: "${HEYP_LANE_RENDER:-1}"
+      HEYP_SANDBOX_SLOTS: "${HEYP_SANDBOX_SLOTS:-2}"
+      # Image models: empty = built-in defaults (Upscale takes inputs up to 6 MP, fp32 background model,
+      # model threads from the CPU quota, one face/plate detection at a time).
+      HEYP_UPSCALE_MAX_INPUT_MP: "${HEYP_UPSCALE_MAX_INPUT_MP:-}"
+      HEYP_MATTING_MODEL: "${HEYP_MATTING_MODEL:-}"
+      HEYP_AI_THREADS: "${HEYP_AI_THREADS:-}"
+      HEYP_DETECT_CONCURRENCY: "${HEYP_DETECT_CONCURRENCY:-}"
+      HEYP_ALLOW_CROSS_ORIGIN: "0"
+      HEYP_DOCS: "0"
+      # The renderer's socket (missing = the HTML → image tool reports available:false).
+      HEYP_RENDERER_SOCKET: /run/renderer/r.sock
+      # Operator and legal pages (/privacy, /terms): see heyp.env.example.
+      HEYP_OPERATOR_NAME: "${HEYP_OPERATOR_NAME:?set HEYP_OPERATOR_NAME in /etc/heyp/heyp.env}"
+      HEYP_OPERATOR_EMAIL: "${HEYP_OPERATOR_EMAIL:?set HEYP_OPERATOR_EMAIL in /etc/heyp/heyp.env}"
+      HEYP_OPERATOR_COUNTRY: "${HEYP_OPERATOR_COUNTRY:-}"
+      HEYP_GRIEVANCE_OFFICER: "${HEYP_GRIEVANCE_OFFICER:-}"
+      HEYP_POSTAL_ADDRESS: "${HEYP_POSTAL_ADDRESS:-}"
+      HEYP_JURISDICTION: "${HEYP_JURISDICTION:-India}"
+      HEYP_EFFECTIVE_DATE: "${HEYP_EFFECTIVE_DATE:-}"
+      HEYP_LOG_RETENTION_DAYS: "${HEYP_LOG_RETENTION_DAYS:-14}"
+      HEYP_LOG_IP_TRUNCATED: "${HEYP_LOG_IP_TRUNCATED:-0}"
+      HEYP_BACKUP_RETENTION_DAYS: "${HEYP_BACKUP_RETENTION_DAYS:-14}"
+      HEYP_HOSTING_PROVIDER: "${HEYP_HOSTING_PROVIDER:-Hostinger}"
+      # A CDN in front of the server (e.g. Cloudflare) sees all traffic: /privacy and /terms name it when this is set.
+      HEYP_CDN_PROVIDER: "${HEYP_CDN_PROVIDER:-}"
+      HEYP_CDN_DPA_URL: "${HEYP_CDN_DPA_URL:-}"
+      HEYP_SERVER_LOCATION: "${HEYP_SERVER_LOCATION:-}"
+      HEYP_SECURITY_EMAIL: "${HEYP_SECURITY_EMAIL:-}"
+      HEYP_ABUSE_EMAIL: "${HEYP_ABUSE_EMAIL:-}"
+      HEYP_EU_REPRESENTATIVE: "${HEYP_EU_REPRESENTATIVE:-}"
+      HEYP_UK_REPRESENTATIVE: "${HEYP_UK_REPRESENTATIVE:-}"
+      HEYP_DMCA_AGENT: "${HEYP_DMCA_AGENT:-}"
+      HEYP_LIABILITY_CAP: "${HEYP_LIABILITY_CAP:-}"
+    volumes:
+      - render-sock:/run/renderer
+    tmpfs:
+      # Uploads and results live here (RAM, charged to mem_limit). Full → 507, never an OOM kill.
+      - "/tmp:size=${HEYP_TMP_SIZE:-768m}"
+    mem_limit: "${HEYP_MEM_LIMIT:-3584m}"
+    cpus: ${HEYP_CPUS:-1.5}
+    pids_limit: 512
+    stop_grace_period: 30s
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=4)"]
+    networks: [edge]
+
+  renderer:
+    <<: *hardening
+    profiles: [render]
+    image: ${HEYP_REGISTRY:-ghcr.io/uroy80}/heyp-renderer:${HEYP_TAG:?HEYP_TAG is set by heyp-deploy}
+    security_opt:
+      - no-new-privileges:true
+      # Docker's default profile + clone/unshare/chroot, so Chromium's own sandbox can run (no capabilities).
+      - seccomp=./seccomp/chromium-userns.json
+    environment:
+      HOME: /tmp
+      HEYP_RENDER_SOCKET: /run/renderer/r.sock
+      HEYP_RENDER_EGRESS_HOST: egress
+      HEYP_RENDER_EGRESS_SECRET: "${HEYP_EGRESS_SECRET:?set HEYP_EGRESS_SECRET (openssl rand -hex 32) in /etc/heyp/heyp.env}"
+      HEYP_RENDER_MAX_CONCURRENT: "1" # <= the egress slots
+      HEYP_RENDER_MAX_QUEUE: "4"
+      HEYP_RENDER_CHROMIUM_SANDBOX: "1"
+    volumes:
+      - render-sock:/run/renderer
+    tmpfs:
+      - "/tmp:size=${HEYP_RENDERER_TMP_SIZE:-384m},mode=1777"
+    mem_limit: "${HEYP_RENDERER_MEM_LIMIT:-1g}"
+    cpus: ${HEYP_RENDERER_CPUS:-1.0}
+    pids_limit: 512
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(socket.AF_UNIX); s.settimeout(4); s.connect('/run/renderer/r.sock'); s.sendall(b'GET /healthz HTTP/1.0\\r\\nHost: renderer\\r\\n\\r\\n'); assert b' 200 ' in s.recv(64)"]
+    networks: [render-sbx] # its only neighbour is the egress proxy; no route to the app, the host or the internet
+
+  egress:
+    <<: *hardening
+    profiles: [render]
+    image: ${HEYP_REGISTRY:-ghcr.io/uroy80}/heyp-egress:${HEYP_TAG:?HEYP_TAG is set by heyp-deploy}
+    environment:
+      HEYP_EGRESS_SECRET: "${HEYP_EGRESS_SECRET:?set HEYP_EGRESS_SECRET (openssl rand -hex 32) in /etc/heyp/heyp.env}"
+      HEYP_EGRESS_SLOTS: "1"
+      HEYP_EGRESS_ALLOW_PORTS: "80,443"
+      HEYP_EGRESS_MAX_JOB_BYTES: "52428800" # 50 MB per render, both directions
+      # REQUIRED: this server's own public addresses, so other sites and panels on the VPS are unreachable
+      # (bootstrap-vps.sh fills it in). Private, loopback, link-local and other reserved ranges are always denied.
+      HEYP_EGRESS_DENY_CIDRS: "${HEYP_EGRESS_DENY_CIDRS:?set HEYP_EGRESS_DENY_CIDRS to this VPS's public IPs}"
+      HEYP_EGRESS_DENY_LOCAL_NETS: "1"
+      HEYP_EGRESS_LOG_HOSTS: "0" # never log capture destinations (/privacy); the default, stated here
+    mem_limit: 128m
+    cpus: 0.25
+    pids_limit: 64
+    networks: [render-sbx, egress-wan]
+
+networks:
+  edge:
+    ipam:
+      config:
+        # = the default HEYP_TRUSTED_PROXIES. Other stacks on the host (e.g. heypdf) must use other subnets.
+        - subnet: "${HEYP_EDGE_SUBNET:-172.31.251.0/24}"
+  render-sbx:
+    internal: true
+    driver_opts:
+      # No address for the host on this bridge: the renderer reaches nothing but egress (Engine >= 28).
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+  egress-wan:
+    ipam:
+      config:
+        # Fixed so the optional host guard (heyp-egress-guard) can match it; change both if it collides.
+        - subnet: "${HEYP_EGRESS_SUBNET:-172.31.252.0/24}"
+
+volumes:
+  render-sock: {}

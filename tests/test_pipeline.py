@@ -9,7 +9,7 @@ import pytest
 from PIL import Image
 
 from app.config import get_settings
-from app.imaging import face, io as imgio, passport, pipeline, segment
+from app.imaging import face, io as imgio, matting, opreg, passport, pipeline, segment
 from app.schemas import OutputSpec
 from app.store import FileStore
 
@@ -18,9 +18,12 @@ PIL_FORMAT = {"jpeg": "JPEG", "png": "PNG", "webp": "WEBP", "ico": "ICO", "tiff"
 
 
 @pytest.fixture(autouse=True)
-def _register_and_reset():
+def _register_and_reset(monkeypatch):
     imgio.register_plugins()
     pipeline.clear_caches()
+    # v2: background "auto" prefers the any-subject model (BiRefNet). These v1 tests patch the person
+    # model, so the any-subject one is hidden and "auto" falls back to it (as on a server without it).
+    monkeypatch.setattr(matting, "available", lambda: False)
     yield
     pipeline.clear_caches()
     get_settings.cache_clear()
@@ -440,11 +443,12 @@ def test_render_reports_encode_info_only_for_target_size():
 def test_mask_cache_is_bounded_by_bytes(monkeypatch):
     monkeypatch.setattr(segment, "available", lambda: True)
     monkeypatch.setattr(segment, "person_mask", lambda img, **kw: np.ones((img.height, img.width), np.float32))
-    monkeypatch.setattr(pipeline, "_mask_cache", pipeline._LRU(3, max_bytes=50_000))
+    small = opreg.LRU(3, max_bytes=50_000)
+    monkeypatch.setitem(opreg._caches, "background-mask", small)  # the op plug-in's named mask cache
     loaded = load(quadrants(200, 100))  # float16 mask = 40 000 B
     for prefix in ([], [{"op": "flip", "direction": "horizontal"}], [{"op": "flip", "direction": "vertical"}]):
         pipeline.run(loaded, prefix + [{"op": "background", "mode": "remove"}], cache_key="m")
-    assert len(pipeline._mask_cache.keys()) == 1 and pipeline._mask_cache.nbytes == 40_000
+    assert len(small.keys()) == 1 and small.nbytes == 40_000
 
 
 def test_lru_byte_accounting():

@@ -193,8 +193,8 @@ def test_cache_is_thread_safe(store):
 
 
 def test_load_decodes_once_and_caches(store, monkeypatch):
-    calls: list[str] = []
-    fake = types.SimpleNamespace(load=lambda path: calls.append(path) or {"decoded": path})
+    calls: list[tuple[str, str | None]] = []
+    fake = types.SimpleNamespace(load=lambda path, name=None: calls.append((path, name)) or {"decoded": path})
     import app.imaging
 
     monkeypatch.setitem(sys.modules, "app.imaging.io", fake)
@@ -202,7 +202,8 @@ def test_load_decodes_once_and_caches(store, monkeypatch):
     saved = store.save("a.jpg", io.BytesIO(b"abc"), max_bytes=100)
     first = store.load(saved.id)
     second = store.load(saved.id)
-    assert first is second and len(calls) == 1 and calls[0].endswith("/source")
+    assert first is second and len(calls) == 1 and calls[0][0].endswith("/source")
+    assert calls[0][1] == "a.jpg"  # the upload's name: the decoder's hint for TIFF-based RAW files
     store.delete(saved.id)
     with pytest.raises(NotFound):
         store.load(saved.id)
@@ -368,7 +369,7 @@ def test_load_does_not_cache_an_upload_deleted_while_decoding(store, monkeypatch
 
     saved = store.save("a.jpg", io.BytesIO(b"abc"), max_bytes=100)
 
-    def decode_while_deleted(path):
+    def decode_while_deleted(path, name=None):
         store.delete(saved.id)
         return types.SimpleNamespace(image=None)
 
@@ -388,3 +389,74 @@ def test_image_info_is_recorded(store):
     store.delete(saved.id)
     store.set_image_info(saved.id, width=1, height=1, fmt="png")  # gone: silently ignored
     assert list(store.root.iterdir()) == []
+
+
+# ------------------------------------------------------------------ v2: kinds, results, hard TTL
+def test_uploads_default_to_image_kind_and_carry_the_kind_fields(store):
+    saved = store.save("page.html", io.BytesIO(b"<html></html>"), max_bytes=100)
+    info = store.get(saved.id).info()
+    assert {k: info[k] for k in ("kind", "source", "parent_ids", "tool", "expires_at")} == \
+        {"kind": "image", "source": "upload", "parent_ids": [], "tool": None, "expires_at": None}
+    store.set_info(saved.id, kind="html", format="html", mime="text/html")
+    got = store.get(saved.id)
+    assert (got.kind, got.format, got.mime) == ("html", "html", "text/html")
+    store.set_info(saved.id, frames=3)
+    assert store.get(saved.id).info()["frames"] == 3
+    for field in ("owner", "pages", "encrypted", "damaged"):
+        with pytest.raises(ValueError, match="unknown file info"):
+            store.set_info(saved.id, **{field: 1})
+
+
+def test_results_from_bytes_and_paths(store, tmp_path):
+    parent = store.save("in.png", io.BytesIO(b"x"), max_bytes=10)
+    res = store.save_result(b"%PDF-out", "photos.pdf", kind="pdf", fmt="pdf", mime="application/pdf",
+                            parent_ids=[parent.id, "../evil"], tool="img.process")
+    got = store.get(res.id)
+    assert got.source == "result" and got.parent_ids == (parent.id,) and got.tool == "img.process"
+    assert got.kind == "pdf" and got.path.read_bytes() == b"%PDF-out"
+    src = tmp_path / "work.bin"
+    src.write_bytes(b"moved")
+    moved = store.save_result(src, "w.bin", kind="other", fmt=None, mime=None)
+    assert not src.exists() and store.get(moved.id).path.read_bytes() == b"moved"
+    with pytest.raises(StoreError) as empty:
+        store.save_result(b"", "e.txt", kind="other", fmt=None, mime=None)
+    assert empty.value.status == 422
+    with pytest.raises(StoreError) as big:
+        store.save_result(b"x" * 20, "b.txt", kind="other", fmt=None, mime=None, max_bytes=10)
+    assert big.value.status == 413
+    assert len(store.ids()) == 3  # failed results leave nothing behind
+
+
+def test_hard_ttl_ends_a_file_whatever_its_activity(tmp_path):
+    s = FileStore(tmp_path / "s", ttl=3600, hard_ttl=100)
+    s.init()
+    saved = s.save("a.png", io.BytesIO(b"x"), max_bytes=10)
+    assert saved.hard_deadline == pytest.approx(saved.created + 100)
+    result = s.save_result(b"r", "r.png", kind="image", fmt="png", mime="image/png",
+                           hard_deadline=saved.hard_deadline)
+    assert s.get(result.id).hard_deadline == saved.hard_deadline  # results inherit, never extend
+    assert s.cleanup_expired(now=time.time() + 50) == []
+    with s.pinned([saved.id]):  # a running job keeps its input until it ends
+        assert s.cleanup_expired(now=time.time() + 200) == [result.id]
+    assert s.cleanup_expired(now=time.time() + 200) == [saved.id]
+    with pytest.raises(ValueError):
+        FileStore(tmp_path / "x", ttl=60, hard_ttl=-1)
+
+
+def test_hard_deadline_is_checked_on_access(tmp_path, monkeypatch):
+    s = FileStore(tmp_path / "s", ttl=3600, hard_ttl=10)
+    s.init()
+    saved = s.save("a.png", io.BytesIO(b"x"), max_bytes=10)
+    real = time.time
+    monkeypatch.setattr("app.store.time.time", lambda: real() + 60)
+    with pytest.raises(NotFound):
+        s.get(saved.id)
+    assert not s.exists(saved.id)
+
+
+def test_work_root_is_private_and_wiped(store):
+    store.work_root.mkdir()
+    (store.work_root / "job-1").mkdir()
+    store.wipe()
+    assert not store.work_root.exists()
+    assert store.work_root.name == ".work" and store.work_root.parent == store.root

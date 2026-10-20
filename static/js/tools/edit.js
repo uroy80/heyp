@@ -1,8 +1,8 @@
 // Edit: rotate / flip / straighten and tone adjustments (whole batch).
 
 import { h, fmtNum, append } from '../dom.js';
-import { state, rotateQuarter, flip } from '../state.js';
-import { toolHead, group, slider, toggle, iconButton } from '../controls.js';
+import { state, rotateQuarter, flip, flipReset, setRotateOnly, quarterApplies } from '../state.js';
+import { toolHead, group, slider, toggle, iconButton, segmented } from '../controls.js';
 
 const TONE = [
   ['brightness', 'Brightness'],
@@ -31,19 +31,18 @@ export default {
   reset() {
     const e = state.edit;
     while (e.quarter) rotateQuarter(e.quarter === 270 ? 1 : -1);
-    if (e.flipH) flip('h');
-    if (e.flipV) flip('v');
-    Object.assign(e, { straighten: 0, cropEdges: true, brightness: 1, contrast: 1, saturation: 1, sharpness: 1, grayscale: false, autoContrast: false });
+    flipReset();
+    Object.assign(e, { only: 'all', straighten: 0, cropEdges: true, brightness: 1, contrast: 1, saturation: 1, sharpness: 1, grayscale: false, autoContrast: false });
   },
 
   render(root, app) {
     r = {};
     const e = state.edit;
     const orient = h('div', { class: 'btn-row btn-row-4' },
-      iconButton({ label: 'Rotate left', iconName: 'rotateLeft', onClick: () => { rotateQuarter(-1); app.changed({ panel: true }); } }),
+      iconButton({ label: 'Rotate left (Shift+R)', iconName: 'rotateLeft', onClick: () => { rotateQuarter(-1); app.changed({ panel: true }); } }),
       iconButton({ label: 'Rotate right (R)', iconName: 'rotateRight', onClick: () => { rotateQuarter(1); app.changed({ panel: true }); } }),
-      iconButton({ label: 'Flip horizontal', iconName: 'flipH', pressed: e.flipH, onClick: () => { flip('h'); app.changed({ panel: true }); } }),
-      iconButton({ label: 'Flip vertical', iconName: 'flipV', pressed: e.flipV, onClick: () => { flip('v'); app.changed({ panel: true }); } }));
+      iconButton({ label: 'Flip horizontal', iconName: 'flipH', pressed: e.plainFlipH, onClick: () => { flip('h'); app.changed({ panel: true }); } }),
+      iconButton({ label: 'Flip vertical', iconName: 'flipV', pressed: e.plainFlipV, onClick: () => { flip('v'); app.changed({ panel: true }); } }));
 
     const straighten = slider({
       label: 'Straighten', min: -45, max: 45, step: 0.5, value: e.straighten, resetTo: 0,
@@ -57,9 +56,23 @@ export default {
       onInput: (v) => { e[k] = v; app.changed(); },
     }));
 
+    // Rotate batch filter: quarter turns for all photos, or only the landscape / portrait ones
+    const only = segmented({
+      label: 'Rotate', cols: 3, size: 'sm', value: e.only,
+      options: [{ value: 'all', label: 'All photos' }, { value: 'landscape', label: 'Landscape' }, { value: 'portrait', label: 'Portrait' }],
+      onChange: (v) => {
+        const reset = setRotateOnly(v);
+        app.changed({ panel: true });
+        if (reset) app.toast(`Crop reset on ${reset} photo${reset > 1 ? 's' : ''} whose orientation changed.`);
+      },
+    });
+    const n = state.files.length;
+    const hit = state.files.filter((f) => quarterApplies(f)).length;
+    const onlyHint = e.only === 'all' || !n ? null
+      : h('p', { class: 'hint' }, `Turns ${hit} of ${n} photo${n > 1 ? 's' : ''} (the ${e.only} ones). Flips, straighten and tone still apply to all.`);
     append(root,
       toolHead('Edit', 'Rotate, flip, straighten and adjust tone. Applies to every file.', { onReset: () => app.resetTool(this), active: this.isActive() }),
-      group('Orientation', orient, h('p', { class: 'hint' }, `Now: ${e.quarter ? `${e.quarter}° clockwise` : 'as shot'}${e.flipH || e.flipV ? ', mirrored' : ''}. EXIF orientation is already applied.`)),
+      group('Orientation', orient, only, onlyHint, h('p', { class: 'hint' }, `Now: ${e.quarter ? `${e.quarter}° clockwise` : 'as shot'}${e.plainFlipH || e.plainFlipV ? ', mirrored' : ''}. EXIF orientation is already applied.`)),
       group('Straighten', straighten, cropEdges),
       group('Tone', ...tone,
         toggle({ label: 'Auto contrast', checked: e.autoContrast, onChange: (v) => { e.autoContrast = v; app.changed(); } }),

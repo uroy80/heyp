@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="heyp is a private photo toolbox: convert HEIC to JPG or PNG, resize, crop, compress and make passport photos — on your own machine.">
+  <meta name="description" content="heyp is a free, open-source image toolbox: convert HEIC to JPG or PNG, resize, crop, compress, upscale, watermark, blur faces, make memes, GIFs and passport photos, and capture web pages as images.">
   <meta name="referrer" content="no-referrer">
-  <title>heyp :) · photo toolbox</title>
+  <title>heyp :) · image toolbox</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="preload" href="/fonts/fraunces-latin-opsz-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/fonts/libre-franklin-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
@@ -14,7 +14,7 @@
   <script src="/js/theme.js"></script>
   <script type="module" src="/app.js"></script>
 </head>
-<body>
+<body class="copy-pending">
   <a class="skip-link" href="#tool-panel">Skip to tool options</a>
 
   <header class="topbar">
@@ -27,14 +27,20 @@
       <span class="wordmark">heyp<span class="smile" aria-hidden="true"> :)</span></span>
     </a>
     <div class="topbar-actions">
-      <span class="local-pill" title="Everything runs in your heyp container. Nothing is uploaded to the internet.">Local only</span>
+      <span class="local-pill"></span>
       <button type="button" class="btn btn-ghost add-btn" id="add-btn">
         <span class="add-icon" aria-hidden="true"></span><span class="add-label">Add photos</span>
       </button>
       <button type="button" class="icon-btn" id="help-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" aria-haspopup="dialog"></button>
       <button type="button" class="icon-btn" id="theme-btn" aria-label="Toggle theme"></button>
     </div>
-    <p class="dateline" aria-hidden="true"><span class="dateline-edition"></span><span class="dateline-mid">Files stay on this machine — nothing is uploaded</span><time class="dateline-date" id="dateline-date"></time></p>
+    <div class="dateline">
+      <span class="dateline-edition" aria-hidden="true"></span>
+      <nav class="dateline-mid sibling" aria-label="Switch app">
+        <a href="/" class="sibling-link" aria-current="page">heyp <span class="sibling-what">images</span></a><span class="sibling-dot" aria-hidden="true" hidden>·</span><a href="#" class="sibling-link" data-app="heypdf" hidden>heypdf <span class="sibling-what">PDF tools</span></a>
+      </nav>
+      <time class="dateline-date" id="dateline-date" aria-hidden="true"></time>
+    </div>
   </header>
 
   <main class="app" id="app">
@@ -47,15 +53,15 @@
         <div class="dropzone" id="dropzone">
           <div class="dz-inner">
             <div class="dz-icon" aria-hidden="true"></div>
-            <p class="dz-kicker">Today’s edition · No photos yet</p>
+            <p class="dz-kicker">No photos yet</p>
             <h1 class="dz-title">Drop photos here</h1>
-            <p class="dz-lede">Convert iPhone HEIC to JPG, resize, crop, compress and make passport photos — on this machine, never the internet.</p>
+            <p class="dz-lede">Convert iPhone HEIC to JPG, resize, crop, compress, upscale, watermark and make passport photos.</p>
             <p class="dz-sub">
               <button type="button" class="btn btn-primary" id="dz-pick">Choose photos</button>
               <span class="dz-or">or paste with <kbd class="kbd-mod">Ctrl</kbd>&thinsp;<kbd>V</kbd></span>
             </p>
-            <p class="dz-formats">HEIC · JPG · PNG · WebP · AVIF · TIFF · BMP · GIF · ICO · JPEG&nbsp;2000</p>
-            <p class="dz-privacy"><span class="dz-shield" aria-hidden="true"></span>Files stay on this machine</p>
+            <p class="dz-formats">HEIC · JPG · PNG · WebP · AVIF · TIFF · BMP · GIF · ICO · JPEG&nbsp;2000 · PSD · SVG · RAW</p>
+            <p class="dz-privacy"><span class="dz-shield" aria-hidden="true"></span><span>Open source (AGPL-3.0)</span></p>
           </div>
         </div>
         <div class="stage" id="stage"></div>
@@ -84,11 +90,17 @@
     <aside class="panel" aria-label="Options">
       <div class="panel-body" id="tool-panel" role="region" tabindex="-1"></div>
       <section class="export" id="export" aria-labelledby="export-title"></section>
+      <footer class="colophon" id="colophon">
+        <nav class="colophon-links" id="colophon-links" aria-label="About heyp">
+          <a href="/privacy" target="_blank" rel="noopener">Privacy</a><a href="/terms" target="_blank" rel="noopener">Terms</a><a href="/credits" target="_blank" rel="noopener">Credits</a><a href="https://github.com/uroy80/heyp" target="_blank" rel="noopener">Source code (AGPL-3.0)</a>
+        </nav>
+        <p class="colophon-meta"><span id="colophon-operator"></span><span id="colophon-version"></span></p>
+      </footer>
     </aside>
   </main>
 
   <input type="file" id="file-input" multiple hidden
-         accept="image/*,.heic,.heif,.hif,.avif,.webp,.tif,.tiff,.bmp,.gif,.ico,.jp2,.j2k,.jpf,.jpx">
+         accept="image/*,.heic,.heif,.hif,.avif,.webp,.tif,.tiff,.bmp,.gif,.ico,.jp2,.j2k,.jpf,.jpx,.psd,.psb,.svg,.dng,.cr2,.cr3,.nef,.arw,.raf,.orf,.rw2,.pef,.srw">
 
   <div class="dropveil" id="dropveil" hidden aria-hidden="true">
     <div class="dropveil-inner">Drop to add photos</div>
@@ -102,16 +114,17 @@
       <button type="button" class="icon-btn" id="help-close" aria-label="Close"></button>
     </div>
     <dl class="shortcuts">
-      <div><dt><kbd>1</kbd>–<kbd>8</kbd></dt><dd>Switch tool</dd></div>
+      <div><dt><kbd>1</kbd>–<kbd>9</kbd></dt><dd>Switch section (the rest are listed below)</dd></div>
       <div><dt>Hold <kbd>Space</kbd></dt><dd>Show the original</dd></div>
       <div><dt><kbd>R</kbd> / <kbd>Shift</kbd> <kbd>R</kbd></dt><dd>Rotate right / left</dd></div>
       <div><dt><kbd class="kbd-mod">Ctrl</kbd> <kbd>S</kbd></dt><dd>Download</dd></div>
       <div><dt><kbd class="kbd-mod">Ctrl</kbd> <kbd>O</kbd></dt><dd>Add photos</dd></div>
       <div><dt><kbd class="kbd-mod">Ctrl</kbd> <kbd>V</kbd></dt><dd>Paste an image</dd></div>
       <div><dt><kbd>[</kbd> / <kbd>]</kbd></dt><dd>Previous / next photo</dd></div>
-      <div><dt><kbd>Del</kbd></dt><dd>Remove the current photo</dd></div>
+      <div><dt><kbd>Del</kbd></dt><dd>Remove the current photo (in Blur and Photo editor: the selected box or layer; Watermark, Meme and Upscale keep the photo)</dd></div>
       <div><dt><kbd>Esc</kbd></dt><dd>Revert crop changes</dd></div>
-      <div><dt>Arrows</dt><dd>Nudge the crop box (<kbd>Shift</kbd> ×10, <kbd>Alt</kbd> resizes)</dd></div>
+      <div><dt>Arrows</dt><dd>Nudge the crop box or the selected layer (<kbd>Shift</kbd> ×10, <kbd>Alt</kbd> resizes)</dd></div>
+      <div><dt><kbd>[</kbd> / <kbd>]</kbd> on a layer</dt><dd>Turn the selected layer (<kbd>Shift</kbd> 15°)</dd></div>
     </dl>
   </dialog>
 

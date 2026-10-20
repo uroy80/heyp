@@ -1,7 +1,13 @@
-// Single source of truth + the op builder (PLAN.md §7: fixed order
-// rotate/flip → crop → background → passport → resize → adjust → sheet).
+// Single source of truth + the op builder. Fixed op order (PLAN.md §7, extended for v2):
+// blur_regions → rotate/flip/straighten → crop → background → passport → resize → adjust → filter → upscale →
+// frame → meme → overlay → watermark → sheet.
+// - blur_regions comes first, so its boxes are fractions of the EXIF-oriented original — the same image
+//   /api/detect measures and the Blur tool draws on.
+// - upscale is heavy: live previews leave it out (`preview: true`); everything after it is resolution-relative.
 
 import { posInt, num, fmtNum } from './dom.js';
+import { toCornerBox } from './overlay.js';
+import { fontId, catalogLabel, FILTERS, FRAMES } from './catalog.js';
 
 export const FORMAT_LABEL = {
   jpeg: 'JPG', png: 'PNG', webp: 'WebP', avif: 'AVIF', heic: 'HEIC', tiff: 'TIFF',
@@ -16,24 +22,44 @@ const COLOR_NAMES = { '#ffffff': 'White', '#000000': 'Black', '#f2f2f2': 'Off-wh
 export const colorName = (hex) => COLOR_NAMES[String(hex || '').toLowerCase()] || null;
 
 export const defaults = {
+  /**
+   * quarter/flipH/flipV: canonical "rotate, then flip" form for photos the quarter turn applies to
+   * (`only` filter); plainFlipH/V: the same flips for photos it skips (no rotation to swap them through).
+   */
   edit: () => ({
-    quarter: 0, flipH: false, flipV: false, straighten: 0, cropEdges: true,
+    quarter: 0, flipH: false, flipV: false, plainFlipH: false, plainFlipV: false, only: 'all', straighten: 0, cropEdges: true,
     brightness: 1, contrast: 1, saturation: 1, sharpness: 1, grayscale: false, autoContrast: false,
   }),
+  /** factor 0 = off. loupe = centre of the detail check (fractions of the image entering upscale). */
+  upscale: () => ({ factor: 0, model: 'balanced', loupe: { cx: 0.5, cy: 0.5 } }),
+  watermark: () => ({
+    kind: 'text', text: '', font: 'libre_franklin', size: 0.05, color: '#ffffff', opacity: 0.6, rotation: 0,
+    /** position: a 9-grid name, or 'custom' = dragged on the photo to centre (x, y) fractions */
+    position: 'bottom-right', x: 0.5, y: 0.5, mosaic: false, margin: 0.03, imageId: null, imageName: '', imageW: 0, imageH: 0, imageScale: 0.25,
+  }),
+  meme: () => ({ top: '', bottom: '', font: 'anton', autoSize: true, size: 0.1, color: '#ffffff', outline: '#000000', uppercase: true }),
+  /** strength 0…1; regions live on each file (`file.regions`). */
+  blur: () => ({ mode: 'blur', strength: 0.6, color: '#141210' }),
+  /** filter/frame apply to every photo; overlay items live on each file (`file.items`). */
+  editor: () => ({ filter: 'none', intensity: 1, frame: 'none', frameColor: null, frameWidth: null, tab: 'filters', brush: { color: '#e0262e', width: 0.012, opacity: 1 }, drawing: false }),
+  /** applyEdits: frames get the other sections' edits first (rendered by the img.process job). */
+  gif: () => ({ delay: 500, loop: true, format: 'gif', size: 0, skip: [], applyEdits: true }),
+  html: () => ({ url: '', width: 1440, fullPage: true, format: 'jpg', delay: 0, blockBanners: true }),
   resize: () => ({
     on: false, mode: 'dimensions', width: null, height: null, driver: 'width', lock: true, fit: 'fill',
     percent: 50, longEdge: null, printW: null, printH: null, printDriver: 'width', unit: 'in', dpi: 300,
     noEnlarge: false,
   }),
-  /** autoFrom: the export format Remove replaced with PNG (restored when leaving Remove). */
-  background: () => ({ mode: 'off', color: '#ffffff', autoFrom: null }),
+  /** autoFrom: the export format Remove replaced with PNG (restored when leaving Remove). engine: v2 matting. */
+  background: () => ({ mode: 'off', color: '#ffffff', autoFrom: null, engine: 'auto' }),
   passport: () => ({
     on: false, preset: null, background: null, replace: true, level: true, guides: true,
     zoom: 1, offsetX: 0, offsetY: 0,
     layout: 'single', paper: '4x6', copies: 0, cutLines: true,
     custom: { width_mm: 35, height_mm: 45, dpi: 300 },
   }),
-  compress: () => ({ on: false, maxKb: null, minKb: null }),
+  /** mode 'keep': img.compress job (same format); 'target': the export hits maxKb/minKb (on = a limit is set). */
+  compress: () => ({ on: false, maxKb: null, minKb: null, mode: 'keep', level: 'recommended', pngQuantize: true }),
   output: () => ({
     format: 'jpeg', quality: 90, lossless: false, progressive: true, chroma: 'auto',
     stripMetadata: true, stripGps: true, colorspace: 'srgb', background: '#ffffff',
@@ -53,14 +79,32 @@ export const state = {
   presetsError: null,
   /** Server limits from /api/health (max_upload_mb, max_files, max_pixels); null until known. */
   limits: null,
+  /** GET /api/config (v2), null on older servers. */
+  config: null,
+  /** GET /api/tools: the job-tool registry entries, null until loaded. */
+  tools: null,
   edit: defaults.edit(),
   resize: defaults.resize(),
   background: defaults.background(),
   passport: defaults.passport(),
   compress: defaults.compress(),
   output: defaults.output(),
+  upscale: defaults.upscale(),
+  watermark: defaults.watermark(),
+  meme: defaults.meme(),
+  blur: defaults.blur(),
+  editor: defaults.editor(),
+  gif: defaults.gif(),
+  html: defaults.html(),
   cropRatio: 'free',
 };
+
+/** The registry entry of a job tool (`img.make_gif` …) or null. */
+export const toolEntry = (id) => (state.tools || []).find((t) => t.id === id) || null;
+
+let idN = 0;
+/** Short unique id for overlay items and regions. */
+export const newId = (p = 'i') => `${p}${Date.now().toString(36)}${(++idN).toString(36)}`;
 
 export const activeFile = () => state.files.find((f) => f.id === state.activeId) || null;
 export const findPreset = (id) => state.presets.find((p) => p.id === id) || null;
@@ -101,10 +145,22 @@ export function inscribedScale(w, h, deg) {
   return Math.max(0.05, k - 2 / Math.min(w, h)); // shave 1 px per side: no fill-coloured fringe
 }
 
+/**
+ * Whether the batch quarter turn applies to `file` (Edit › Rotate "Apply to"): all photos, or only those that
+ * are landscape / portrait as shot (after EXIF orientation). Squares count as neither.
+ */
+export function quarterApplies(file, only = state.edit.only) {
+  if (!only || only === 'all') return true;
+  const w = file?.info?.width;
+  const h = file?.info?.height;
+  if (!(w > 0 && h > 0)) return false;
+  return only === 'landscape' ? w > h : h > w;
+}
+
 /** Image size after EXIF orientation + quarter turns. */
 export function orientedDims(file) {
   const { width: w, height: h } = file.info;
-  return state.edit.quarter % 180 ? { w: h, h: w } : { w, h };
+  return state.edit.quarter % 180 && quarterApplies(file) ? { w: h, h: w } : { w, h };
 }
 
 function straightenScale(file) {
@@ -162,9 +218,10 @@ export function preResizeDims(file) {
 export function preCropOps(file) {
   const e = state.edit;
   const ops = [];
-  if (e.quarter) ops.push({ op: 'rotate', angle: e.quarter });
-  if (e.flipH) ops.push({ op: 'flip', direction: 'horizontal' });
-  if (e.flipV) ops.push({ op: 'flip', direction: 'vertical' });
+  const turns = quarterApplies(file);
+  if (e.quarter && turns) ops.push({ op: 'rotate', angle: e.quarter });
+  if (turns ? e.flipH : e.plainFlipH) ops.push({ op: 'flip', direction: 'horizontal' });
+  if (turns ? e.flipV : e.plainFlipV) ops.push({ op: 'flip', direction: 'vertical' });
   if (e.straighten) {
     const fill = file?.info?.has_alpha ? 'transparent' : '#ffffff';
     ops.push({ op: 'rotate', angle: e.straighten, expand: false, fill });
@@ -280,34 +337,248 @@ export function framingOf(ops) {
 
 /** Ops before the passport op (what the passport context view shows around the frame); null when inactive. */
 export function prePassportOps(file) {
-  const ops = buildOps(file);
+  const ops = buildOps(file, { preview: true });
   const i = ops.findIndex((o) => o.op === 'passport');
   return i < 0 ? null : ops.slice(0, i);
 }
 
-export function buildOps(file) {
-  const ops = preCropOps(file);
+/** Pipeline stages in op order; `buildOps(file, {until})` stops before the named stage. */
+export const STAGES = ['blur', 'orient', 'crop', 'background', 'passport', 'resize', 'adjust', 'filter', 'upscale', 'frame', 'meme', 'overlay', 'watermark', 'sheet'];
+
+/** Ops whose cost makes a live preview impractical: left out of previews, applied on export. */
+export const HEAVY_OPS = new Set(['upscale']);
+
+/**
+ * Ops too slow for one HTTP request behind a proxy (Cloudflare cuts at 100 s, Apache at 60 s): an export with any
+ * of them — or with several photos — runs as the `img.process` job (progress, no proxy timeout).
+ */
+export const JOB_OPS = new Set(['upscale', 'background']);
+
+/**
+ * The op list for `file`. `preview` leaves out heavy ops (upscale); `until` = a STAGES name: only the ops
+ * before that stage (the image a tool edits on — e.g. 'overlay' for the photo editor's canvas).
+ */
+export function buildOps(file, { preview = false, until = null } = {}) {
+  const ops = [];
+  const stop = until ? STAGES.indexOf(until) : STAGES.length;
+  const at = (stage) => STAGES.indexOf(stage) < stop;
   const pp = passportActive();
-  if (!pp && file?.crop) {
+  if (at('blur')) {
+    const b = blurOp(file);
+    if (b) ops.push(b);
+  }
+  if (at('orient')) ops.push(...preCropOps(file));
+  if (at('crop') && !pp && file?.crop) {
     const c = cropOp(file.crop, file);
     if (c) ops.push(c);
   }
-  if (state.background.mode !== 'off' && state.features.segmentation) {
-    ops.push(state.background.mode === 'replace'
+  if (at('background') && state.background.mode !== 'off' && state.features.segmentation) {
+    const b = state.background.mode === 'replace'
       ? { op: 'background', mode: 'replace', color: state.background.color }
-      : { op: 'background', mode: 'remove' });
+      : { op: 'background', mode: 'remove' };
+    // v2 matting engines; older servers reject unknown fields, so only send it when the server has them
+    if (state.features.matting && state.background.engine && state.background.engine !== 'auto') b.engine = state.background.engine;
+    ops.push(b);
   }
-  if (pp) ops.push(passportOp());
-  if (!pp) {
+  if (at('passport') && pp) ops.push(passportOp());
+  if (at('resize') && !pp) {
     const r = resizeOp();
     if (r) ops.push(r);
   }
-  const a = adjustOp();
-  if (a) ops.push(a);
-  if (pp && state.passport.layout === 'sheet') {
+  if (at('adjust')) {
+    const a = adjustOp();
+    if (a) ops.push(a);
+  }
+  if (at('filter')) {
+    const f = filterOp();
+    if (f) ops.push(f);
+  }
+  if (at('upscale') && !preview) {
+    const u = upscaleOp();
+    if (u) ops.push(u);
+  }
+  if (at('frame')) {
+    const f = frameOp();
+    if (f) ops.push(f);
+  }
+  if (at('meme')) {
+    const m = memeOp();
+    if (m) ops.push(m);
+  }
+  if (at('overlay')) {
+    const o = overlayOp(file);
+    if (o) ops.push(o);
+  }
+  if (at('watermark')) {
+    const w = watermarkOp();
+    if (w) ops.push(w);
+  }
+  if (at('sheet') && pp && state.passport.layout === 'sheet') {
     ops.push({ op: 'sheet', paper: state.passport.paper, copies: state.passport.copies, cut_lines: state.passport.cutLines });
   }
   return ops;
+}
+
+// ── v2 ops ──────────────────────────────────────────────────────────────────
+
+/** Blur regions that are switched on (a detected suggestion can be unticked). */
+export const activeRegions = (file) => (file?.regions || []).filter((r) => r.on !== false && r.w > 0 && r.h > 0);
+
+/** Pixelate below this strength leaves faces recognisable (≈ 14+ blocks across a face): never sent lower (img-06). */
+export const PIXELATE_MIN = 0.4;
+
+export function blurOp(file) {
+  const regions = activeRegions(file);
+  if (!regions.length) return null;
+  const b = state.blur;
+  const op = {
+    op: 'blur_regions', regions: regions.map((r) => ({ ...toCornerBox(r), shape: r.shape === 'ellipse' ? 'ellipse' : 'rect' })),
+    mode: b.mode, strength: round3(b.mode === 'pixelate' ? Math.max(PIXELATE_MIN, b.strength) : b.strength),
+  };
+  if (b.mode === 'solid') op.color = b.color;
+  return op;
+}
+
+/** Upscale applies (a factor chosen, the server has the model, and Passport isn't fixing the output size). */
+export const upscaleActive = () => state.upscale.factor > 1 && state.features.upscale !== false && !passportActive();
+
+export function upscaleOp() {
+  if (!upscaleActive()) return null;
+  return { op: 'upscale', factor: state.upscale.factor, model: state.upscale.model };
+}
+
+/** Output size of `dims` after the chosen upscale, and whether it stays within the server's pixel limit. */
+/** Upscale's output size against the server's pixel limit, and its input against Upscale's own input limit. */
+export function upscalePlan(dims, factor = state.upscale.factor, limits = state.limits) {
+  if (!dims || !(factor > 1)) return null;
+  const w = Math.round(dims.w * factor);
+  const h = Math.round(dims.h * factor);
+  const max = limits?.max_pixels > 0 ? limits.max_pixels : Infinity;
+  const maxIn = limits?.upscale_max_input_pixels > 0 ? limits.upscale_max_input_pixels : Infinity;
+  const inOk = dims.w * dims.h <= maxIn;
+  return {
+    w, h, mp: (w * h) / 1e6, ok: w * h <= max && inOk, maxMp: Number.isFinite(max) ? max / 1e6 : null,
+    inOk, inMp: (dims.w * dims.h) / 1e6, maxInMp: Number.isFinite(maxIn) ? maxIn / 1e6 : null,
+  };
+}
+
+export function filterOp() {
+  const e = state.editor;
+  if (!e.filter || e.filter === 'none' || !(e.intensity > 0)) return null;
+  return { op: 'filter', name: e.filter, intensity: round3(e.intensity) };
+}
+
+export function frameOp() {
+  const e = state.editor;
+  if (!e.frame || e.frame === 'none') return null;
+  // colour / width left out = the style's own (film strip dark, instant photo white …), see editor.py FRAMES
+  const op = { op: 'frame', style: e.frame };
+  if (e.frameColor) op.color = e.frameColor;
+  if (e.frameWidth != null && Number.isFinite(e.frameWidth)) op.width = round3(e.frameWidth);
+  return op;
+}
+
+export const memeActive = () => Boolean(state.meme.top.trim() || state.meme.bottom.trim());
+
+export function memeOp() {
+  if (!memeActive()) return null;
+  const m = state.meme;
+  return {
+    op: 'meme', top: m.top.trim(), bottom: m.bottom.trim(), font: fontId(m.font),
+    size: m.autoSize ? 'auto' : round3(m.size), color: m.color, outline: m.outline === 'none' ? 'transparent' : m.outline, uppercase: m.uppercase,
+  };
+}
+
+/** Overlay items in the server's JSON (fractions of the image at the overlay step, centre-anchored). */
+export function overlayItemJSON(it) {
+  const base = { x: round4(it.cx), y: round4(it.cy), rotation: round3(it.rotation || 0), opacity: round3(it.opacity ?? 1) };
+  if (it.kind === 'text') {
+    return { type: 'text', text: String(it.text).slice(0, 500), ...base, size: round4(it.size), font: fontId(it.font), color: it.color, align: it.align || 'center' };
+  }
+  // the server sizes a sticker by its width (w) and keeps the artwork's aspect (app/imaging/ops_ext/edit.py StickerItem)
+  if (it.kind === 'sticker') return { type: 'sticker', sticker: it.sticker, ...base, w: round4(it.w) };
+  if (it.kind === 'shape') {
+    return {
+      type: 'shape', shape: it.shape, ...base, w: round4(it.w), h: round4(it.h),
+      // ShapeItem: `color` is the outline, `fill` null = none
+      color: it.color || '#e0262e', fill: it.fill || null, stroke_width: round4(it.strokeWidth ?? 0.008),
+    };
+  }
+  if (it.kind === 'brush') {
+    return { type: 'brush', points: it.points, color: it.color, width: round4(it.width), opacity: round3(it.opacity ?? 1) };
+  }
+  return null;
+}
+
+/** Overlay items worth sending (text needs words, brush needs points). */
+export const liveItems = (file) => (file?.items || []).filter((it) => (it.kind === 'text' ? Boolean(String(it.text || '').trim()) : it.kind === 'brush' ? it.points?.length > 0 : true));
+
+export function overlayOp(file) {
+  const items = liveItems(file).map(overlayItemJSON).filter(Boolean);
+  return items.length ? { op: 'overlay', items } : null;
+}
+
+export const watermarkActive = () => {
+  const w = state.watermark;
+  return w.kind === 'image' ? Boolean(w.imageId) : Boolean(w.text.trim());
+};
+
+export function watermarkOp() {
+  if (!watermarkActive()) return null;
+  const w = state.watermark;
+  const op = {
+    op: 'watermark', kind: w.kind, opacity: round3(w.opacity), rotation: round3(w.rotation),
+    position: w.mosaic ? 'mosaic' : w.position, margin: round3(w.margin),
+  };
+  if (!w.mosaic && w.position === 'custom') Object.assign(op, { x: round4(w.x), y: round4(w.y) });
+  if (w.kind === 'image') Object.assign(op, { image_id: w.imageId, image_scale: round3(w.imageScale) });
+  else Object.assign(op, { text: w.text.trim().slice(0, 200), font: fontId(w.font), size: round3(w.size), color: w.color });
+  return op;
+}
+
+const round3 = (v) => Math.round(Number(v) * 1000) / 1000;
+const round4 = (v) => Math.round(Number(v) * 10000) / 10000;
+
+/** Any op in this request can't be previewed live (export applies it). */
+export const hasHeavyOps = (files = state.files) => files.some((f) => buildOps(f).some((o) => HEAVY_OPS.has(o.op)));
+
+/** Any photo gets an op that is too slow for one request (upscale, background removal). */
+export const hasJobOps = (files = state.files) => files.some((f) => buildOps(f).some((o) => JOB_OPS.has(o.op)));
+
+/** Export through the img.process job (when the server has it): several photos, or a slow op. */
+export const exportNeedsJob = (files = state.files) => files.length > 1 || hasJobOps(files);
+
+/** Ops that change a photo's size before upscale, so its original size says nothing about upscale's input. */
+const SIZE_OPS = new Set(['crop', 'crop_aspect', 'resize', 'pad', 'trim', 'passport', 'sheet']);
+
+/**
+ * Photos of a batch an upscale by `factor` can't take (input or output over the server's limits), as
+ * [{file, plan}]. `dimsOf(file)` → the size entering upscale, or null when unknown (such photos are left to the
+ * server to check rather than refused on a guess).
+ */
+export function upscaleProblems(files, dimsOf, factor = state.upscale.factor, limits = state.limits) {
+  if (!(factor > 1)) return [];
+  return files.map((file) => ({ file, plan: upscalePlan(dimsOf(file), factor, limits) })).filter((x) => x.plan && !x.plan.ok);
+}
+
+/** Best-known size entering upscale: the live preview's, else the original's when nothing before resizes it. */
+export function upscaleInputDims(file) {
+  const p = file?.preview;
+  if (p?.width > 0 && p?.height > 0) return { w: p.width, h: p.height };
+  if (!(file?.info?.width > 0 && file?.info?.height > 0)) return null;
+  if (buildOps(file, { preview: true }).some((o) => SIZE_OPS.has(o.op))) return null;
+  return { w: file.info.width, h: file.info.height };
+}
+
+/** Formats that keep every frame of an animated source ('png' only for an APNG source). */
+function keepsAnimation(fmt, file) {
+  if (fmt === 'original' || fmt === 'gif' || fmt === 'webp') return true;
+  return fmt === 'png' && file?.info?.format === 'png';
+}
+
+/** Animated photos the chosen export format reduces to their first frame (export meta + status line). */
+export function stillAnimations(files = state.files, fmt = state.output.format) {
+  return files.filter((f) => Number(f?.info?.frames) > 1 && !keepsAnimation(fmt, f));
 }
 
 export function outputDpi() {
@@ -425,9 +696,26 @@ export function warningSummary(list) {
   return `${uniq.length} warnings — ${uniq.slice(0, 2).join(' · ')} …`;
 }
 
-/** Split picked files into upload requests within the server's limits; oversize files are rejected up front. */
-export function planUploads(files, limits, { chunkFiles = 20, chunkBytes = 200 * 1024 * 1024 } = {}) {
-  const maxBytes = limits?.max_upload_mb > 0 ? limits.max_upload_mb * 1024 * 1024 : Infinity;
+const MiB = 1024 * 1024;
+/**
+ * Largest request body the UI sends when the server doesn't publish `limits.max_request_mb`: below Cloudflare's
+ * 100 MB request-body cap (its edge answers bigger uploads with an HTML 413 before they reach the server).
+ */
+export const DEFAULT_REQUEST_MB = 90;
+
+/** Bytes of files per upload request: the server's (or the default) request cap minus 1 MiB of multipart framing. */
+export function requestChunkBytes(limits) {
+  const mb = limits?.max_request_mb > 0 ? limits.max_request_mb : DEFAULT_REQUEST_MB;
+  return Math.max(1, mb - 1) * MiB;
+}
+
+/**
+ * Split picked files into upload requests within the server's limits; oversize files are rejected up front.
+ * A request carries at most `chunkFiles` files and `chunkBytes` bytes; a single larger file goes alone.
+ */
+export function planUploads(files, limits, { chunkFiles = 20, chunkBytes = requestChunkBytes(limits) } = {}) {
+  const maxBytes = limits?.max_upload_mb > 0 ? limits.max_upload_mb * MiB : Infinity;
+  const maxRequest = limits?.max_request_mb > 0 ? limits.max_request_mb * MiB : Infinity;
   const perRequest = Math.max(1, Math.min(chunkFiles, limits?.max_files > 0 ? limits.max_files : chunkFiles));
   const rejected = [];
   const chunks = [];
@@ -436,6 +724,10 @@ export function planUploads(files, limits, { chunkFiles = 20, chunkBytes = 200 *
   for (const f of files) {
     if (f.size > maxBytes) {
       rejected.push({ name: f.name, detail: `larger than the ${fmtNum(limits.max_upload_mb)} MB upload limit` });
+      continue;
+    }
+    if (f.size > maxRequest - MiB) {
+      rejected.push({ name: f.name, detail: `larger than the ${fmtNum(limits.max_request_mb)} MB this site accepts in one upload` });
       continue;
     }
     if (cur.length && (cur.length >= perRequest || bytes + f.size > chunkBytes)) {
@@ -459,32 +751,59 @@ export function sanitizeFilename(s) {
 
 const swapRatio = (r) => (typeof r === 'string' && r.includes(':') ? r.split(':').reverse().join(':') : r);
 
-/** Rotate the whole batch by ±90°, keeping flips and crop boxes visually consistent. */
+/** Rotate the batch (or the photos the "Apply to" filter picks) by ±90°, keeping flips and crop boxes consistent. */
 export function rotateQuarter(dir) {
   const e = state.edit;
   e.quarter = (((e.quarter + (dir > 0 ? 90 : 270)) % 360) + 360) % 360;
-  // flip-after-rotate is canonical: R90 ∘ Fh = Fv ∘ R90, so swap the flips.
+  // flip-after-rotate is canonical: R90 ∘ Fh = Fv ∘ R90, so swap the flips (photos the turn skips keep plain flips).
   [e.flipH, e.flipV] = [e.flipV, e.flipH];
   for (const f of state.files) {
     const c = f.crop;
-    if (c?.kind !== 'box') continue;
+    if (c?.kind !== 'box' || !quarterApplies(f)) continue;
     const nb = dir > 0
       ? { x: 1 - c.y - c.h, y: c.x, w: c.h, h: c.w }
       : { x: c.y, y: 1 - c.x - c.w, w: c.h, h: c.w };
     f.crop = { ...c, ...nb, ratio: swapRatio(c.ratio) };
   }
-  state.cropRatio = swapRatio(state.cropRatio); // any a:b, so 4:5 → 5:4 and 35:45 → 45:35 stay locked to the box's shape
+  // any a:b, so 4:5 → 5:4 and 35:45 → 45:35 stay locked to the box's shape
+  if (quarterApplies(activeFile())) state.cropRatio = swapRatio(state.cropRatio);
 }
 
 export function flip(axis) {
   const e = state.edit;
-  if (axis === 'h') e.flipH = !e.flipH;
-  else e.flipV = !e.flipV;
+  if (axis === 'h') {
+    e.flipH = !e.flipH;
+    e.plainFlipH = !e.plainFlipH;
+  } else {
+    e.flipV = !e.flipV;
+    e.plainFlipV = !e.plainFlipV;
+  }
   for (const f of state.files) {
     const c = f.crop;
     if (c?.kind !== 'box') continue;
     f.crop = axis === 'h' ? { ...c, x: 1 - c.x - c.w } : { ...c, y: 1 - c.y - c.h };
   }
+}
+
+/**
+ * Change Edit › "Apply to" (all | landscape | portrait). Photos whose rotation changes get their crop box
+ * reset (it was drawn on the other orientation). Returns how many crops were reset.
+ */
+export function setRotateOnly(only) {
+  const e = state.edit;
+  const next = ['all', 'landscape', 'portrait'].includes(only) ? only : 'all';
+  let reset = 0;
+  if (e.quarter || e.flipH !== e.plainFlipH || e.flipV !== e.plainFlipV) {
+    for (const f of state.files) {
+      if (quarterApplies(f, e.only) !== quarterApplies(f, next) && f.crop?.kind === 'box') {
+        f.crop = null;
+        reset++;
+      }
+    }
+  }
+  e.only = next;
+  if (activeFile() && !activeFile().crop) state.cropRatio = 'free';
+  return reset;
 }
 
 // ── human-readable edits (chips) ────────────────────────────────────────────
@@ -516,7 +835,7 @@ export function describeEdits(file) {
   const pp = passportActive();
 
   const rot = [];
-  if (e.quarter) rot.push({ 90: '90° right', 180: '180°', 270: '90° left' }[e.quarter]);
+  if (e.quarter) rot.push({ 90: '90° right', 180: '180°', 270: '90° left' }[e.quarter] + (e.only !== 'all' ? ` (${e.only} only)` : ''));
   if (e.straighten) rot.push(`${e.straighten > 0 ? '+' : ''}${fmtNum(e.straighten, 1)}°`);
   if (rot.length) {
     out.push({
@@ -527,9 +846,17 @@ export function describeEdits(file) {
       },
     });
   }
-  if (e.flipH || e.flipV) {
-    const label = e.flipH && e.flipV ? 'Flip both' : e.flipH ? 'Flip horizontal' : 'Flip vertical';
+  if (e.plainFlipH || e.plainFlipV) {
+    // named by what was pressed (the canonical flags swap with every quarter turn)
+    const label = e.plainFlipH && e.plainFlipV ? 'Flip both' : e.plainFlipH ? 'Flip horizontal' : 'Flip vertical';
     out.push({ key: 'flip', tool: 'edit', label, clear: () => flipReset() });
+  }
+  const regions = activeRegions(file);
+  if (regions.length) {
+    out.push({
+      key: 'blur', tool: 'blur', label: `${{ blur: 'Blur', pixelate: 'Pixelate', solid: 'Cover' }[state.blur.mode] || 'Blur'} ${regions.length} area${regions.length > 1 ? 's' : ''}`,
+      clear: () => { file.regions = []; },
+    });
   }
   if (file?.crop && !pp) {
     const c = file.crop;
@@ -572,6 +899,34 @@ export function describeEdits(file) {
       clear: () => Object.assign(e, { brightness: 1, contrast: 1, saturation: 1, sharpness: 1, grayscale: false, autoContrast: false }),
     });
   }
+  const ed = state.editor;
+  if (filterOp()) {
+    out.push({ key: 'filter', tool: 'editor', label: `Filter ${catalogLabel(FILTERS, ed.filter)}${ed.intensity < 1 ? ` ${Math.round(ed.intensity * 100)}%` : ''}`, clear: () => { ed.filter = 'none'; ed.intensity = 1; } });
+  }
+  if (upscaleActive()) {
+    out.push({ key: 'upscale', tool: 'upscale', label: `Upscale ${state.upscale.factor}×`, clear: () => { state.upscale.factor = 0; } });
+  }
+  if (frameOp()) out.push({ key: 'frame', tool: 'editor', label: `Frame ${catalogLabel(FRAMES, ed.frame)}`, clear: () => { ed.frame = 'none'; } });
+  if (memeActive()) {
+    const m = state.meme;
+    out.push({ key: 'meme', tool: 'meme', label: `Meme “${clip(m.top.trim() || m.bottom.trim(), 18)}”`, clear: () => { state.meme = { ...defaults.meme(), font: m.font, color: m.color, outline: m.outline }; } });
+  }
+  const items = liveItems(file);
+  if (items.length) {
+    const kinds = new Set(items.map((it) => it.kind));
+    const what = kinds.size > 1 ? `${items.length} layers` : `${items.length} ${{ text: 'text', sticker: 'sticker', shape: 'shape', brush: 'drawing' }[[...kinds][0]]}${items.length > 1 && !kinds.has('text') ? 's' : ''}`;
+    out.push({ key: 'overlay', tool: 'editor', label: what.charAt(0).toUpperCase() + what.slice(1), clear: () => { file.items = []; } });
+  }
+  if (watermarkActive()) {
+    const w = state.watermark;
+    out.push({
+      key: 'watermark', tool: 'watermark', label: w.kind === 'image' ? 'Logo watermark' : `Watermark “${clip(w.text.trim(), 16)}”`,
+      clear: () => {
+        if (w.kind === 'image') Object.assign(w, { imageId: null, imageName: '', imageW: 0, imageH: 0 });
+        else w.text = '';
+      },
+    });
+  }
   const c = state.compress;
   if (c.on && (num(c.maxKb) > 0 || num(c.minKb) > 0)) {
     const max = num(c.maxKb);
@@ -582,9 +937,21 @@ export function describeEdits(file) {
   return out;
 }
 
-function flipReset() {
-  if (state.edit.flipH) flip('h');
-  if (state.edit.flipV) flip('v');
+const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
+/** Clear every flip, mirroring each photo's crop box by the flips its own op list had. */
+export function flipReset() {
+  const e = state.edit;
+  for (const f of state.files) {
+    const c = f.crop;
+    if (c?.kind !== 'box') continue;
+    const turns = quarterApplies(f);
+    let b = c;
+    if (turns ? e.flipH : e.plainFlipH) b = { ...b, x: 1 - b.x - b.w };
+    if (turns ? e.flipV : e.plainFlipV) b = { ...b, y: 1 - b.y - b.h };
+    f.crop = b;
+  }
+  Object.assign(e, { flipH: false, flipV: false, plainFlipH: false, plainFlipV: false });
 }
 
 /** "4:5" stays, numbers become "1.5:1", "original" stays. */

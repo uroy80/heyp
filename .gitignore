@@ -13,3 +13,4 @@ node_modules/
 models/
 tests/output/
 *.log
+.work/

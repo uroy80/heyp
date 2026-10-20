@@ -1,4 +1,5 @@
-// Background: remove (transparent) or replace with a colour, via person segmentation.
+// Background: remove (transparent) or replace with a colour. v2 servers cut out any subject (BiRefNet) or
+// people only (U²-Net); older ones only people.
 
 import { h, append } from '../dom.js';
 import { state, ALPHA_FORMATS, FORMAT_LABEL, passportActive, setBackgroundMode, resetBackground } from '../state.js';
@@ -29,9 +30,9 @@ export default {
     r = {};
     const b = state.background;
     const seg = state.features.segmentation;
-    append(root, toolHead('Background', 'Cut out the person and remove or replace what’s behind them. Works best on portraits.', { onReset: () => app.resetTool(this), active: this.isActive() }));
+    append(root, toolHead('Background', 'Cut out the subject and remove or replace what’s behind it.', { onReset: () => app.resetTool(this), active: this.isActive() }));
     if (!seg) {
-      append(root, note('Background removal needs the person-segmentation model, which isn’t available in this heyp build.', 'warn'));
+      append(root, note('Background removal needs a segmentation model, which isn’t available in this heyp build.', 'warn'));
       return;
     }
     const mode = segmented({
@@ -44,6 +45,13 @@ export default {
       },
     });
     append(root, group(null, mode));
+    if (state.features.matting && b.mode !== 'off') {
+      append(root, group(null, segmented({
+        label: 'Subject', cols: 3, value: b.engine || 'auto',
+        options: [{ value: 'auto', label: 'Auto' }, { value: 'object', label: 'Any object' }, { value: 'person', label: 'Person' }],
+        onChange: (v) => { b.engine = v; app.changed(); },
+      }), h('p', { class: 'hint' }, 'Auto finds any subject — pets, products, people. Person is faster and tuned for portraits.')));
+    }
     if (b.mode === 'replace') {
       append(root, group(null, swatches({ label: 'Colour', colors: COLORS, value: b.color, onChange: (v) => { b.color = v; app.changed(); } })));
     } else if (b.mode === 'remove') {
@@ -53,7 +61,7 @@ export default {
     if (passportActive() && state.passport.replace) {
       append(root, note('Passport framing already replaces the background — you usually don’t need both.', 'info'));
     }
-    append(root, h('p', { class: 'hint' }, 'Runs a segmentation model on this machine. The first preview can take a few seconds.'));
+    append(root, h('p', { class: 'hint' }, app.copy?.().bgHint || 'Runs a segmentation model on the heyp server — the photo isn’t sent to an AI service. The first preview can take a few seconds.'));
     this.sync();
   },
 

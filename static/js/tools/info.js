@@ -91,7 +91,7 @@ function renderInfo(body, info, complete) {
     row('DPI', dpi ? `${fmtNum(dpi[0], 1)} × ${fmtNum(dpi[1], 1)}` : 'Not set'),
     row('Print size', dpi ? printSize(info.width, info.height, dpi[0]) : h('span', { class: 'muted' }, 'Set a DPI in Resize to define one')),
     row('Orientation', info.orientation && info.orientation !== 1 ? `${ORIENTATION[info.orientation] || info.orientation} — corrected automatically` : 'Normal'),
-    info.frames > 1 ? row('Frames', `${info.frames} (first frame is used)`) : null,
+    info.frames > 1 ? row('Frames', `${info.frames} — animated; kept when every edit supports animation, else the first frame is used`) : null,
   );
   const parts = [general];
 

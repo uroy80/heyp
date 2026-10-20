@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 150" width="340" height="150">
+  <g transform="rotate(-8 170 75)" fill="none" stroke="#2f7d4f" opacity="0.92">
+    <rect x="18" y="26" width="304" height="98" rx="10" stroke-width="8"/>
+    <rect x="30" y="38" width="280" height="74" rx="6" stroke-width="3"/>
+    <text x="170" y="98" text-anchor="middle" font-family="Anton" font-size="56" fill="#2f7d4f" stroke="none" letter-spacing="6">APPROVED</text>
+  </g>
+</svg>

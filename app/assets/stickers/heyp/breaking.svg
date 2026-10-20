@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 96" width="360" height="96">
+  <rect x="0" y="0" width="360" height="96" fill="#d6332a"/>
+  <rect x="0" y="80" width="360" height="16" fill="#1d1b19"/>
+  <text x="180" y="66" text-anchor="middle" font-family="Anton" font-size="56" fill="#ffffff" letter-spacing="6">BREAKING</text>
+</svg>

@@ -65,8 +65,81 @@ export function guideModel(pp) {
 
 /** Share of the stage (each direction) the passport frame takes, leaving room for the surroundings while moving. */
 export const CONTEXT_FILL = 0.82;
-/** How long the surroundings stay up after a move has settled (ms), so they fade rather than blink. */
-export const SURROUND_LINGER_MS = 600;
+/** How long the surroundings stay up after the hand has let go (ms), so they fade rather than blink. */
+export const SURROUND_LINGER_MS = 400;
+/** A drag shorter than this (stage px) is a click: it neither moves the photo nor brings up the surroundings. */
+const DRAG_SLOP = 3;
+
+/**
+ * Whether some ancestor of `el`, or the page itself, scrolls vertically. On phones and narrow windows the
+ * photo is pinned above the panel and the page scrolls under it; on the desktop layout nothing around it does.
+ * `style` and `doc` are injectable for tests.
+ */
+export function scrollsAround(el, style = (n) => getComputedStyle(n), doc = el?.ownerDocument) {
+  const root = doc?.scrollingElement || doc?.documentElement;
+  for (let n = el?.parentElement; n; n = n.parentElement) {
+    if (!(n.scrollHeight > n.clientHeight + 1)) continue;
+    let oy = style(n).overflowY;
+    if (n === root) {
+      if (oy === 'visible' && doc.body) oy = style(doc.body).overflowY; // the viewport takes body's overflow
+      if (oy !== 'hidden' && oy !== 'clip') return true;
+    } else if (oy === 'auto' || oy === 'scroll') {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * A wheel over the passport photo resizes the head (and so brings up the surroundings) only when it is meant
+ * for the photo: a trackpad pinch or Ctrl + wheel (ctrlKey) always; a plain wheel / two-finger swipe only where
+ * nothing around the photo scrolls. Where the page scrolls, a plain wheel scrolls the page and leaves the photo
+ * — and the finished passport preview — alone.
+ */
+export const wheelResizes = (e, pageScrolls) => Boolean(e?.ctrlKey) || !pageScrolls;
+
+/**
+ * The passport surroundings switch (class `is-surround` on the stage). They show ONLY while the user's hand
+ * is on the photo — a drag, a pinch, a run of wheel / arrow-key steps — and fade a moment after it lets go,
+ * whether or not the re-framed preview has arrived (meanwhile the photo shows inside the frame only).
+ * Never switched on by layout, previews, panel sliders or a pending move. `timers` is injectable for tests.
+ */
+export class SurroundSwitch {
+  constructor(classList, { linger = SURROUND_LINGER_MS, timers = globalThis } = {}) {
+    this.cls = classList;
+    this.linger = linger;
+    this.timers = timers;
+    this.timer = 0;
+  }
+
+  get on() { return this.cls.contains('is-surround'); }
+
+  /** The hand is on the photo: show at once and cancel a pending fade. */
+  hold() {
+    this.timers.clearTimeout(this.timer);
+    this.timer = 0;
+    this.cls.add('is-surround');
+  }
+
+  /** The hand let go: fade after the linger. A fade already under way is not restarted (layout may call this often). */
+  release() {
+    if (!this.on || this.timer) return;
+    this.timer = this.timers.setTimeout(() => { this.timer = 0; this.cls.remove('is-surround'); }, this.linger);
+  }
+
+  /** One discrete step (wheel notch, arrow key, reset): show, then fade after the linger from THIS step. */
+  pulse() {
+    this.hold();
+    this.release();
+  }
+
+  /** Off now (context view left, file changed). */
+  clear() {
+    this.timers.clearTimeout(this.timer);
+    this.timer = 0;
+    this.cls.remove('is-surround');
+  }
+}
 
 const finite = (v) => typeof v === 'number' && Number.isFinite(v);
 
@@ -213,12 +286,15 @@ export class Canvas {
     this.guidePp = null;
     this.stage.append(this.ctxImg, this.frame, this.img, this.guides, this.err);
     this.crop = new CropBox(this.stage, { onChange: onCropChange, onCommit: onCropCommit });
+    /** Extra layers placed over the picture rect on every layout (the v2 editing layer). */
+    this.layers = [];
     this.pan = null;
     this.panDrag = null;
     this.panShown = { dx: 0, dy: 0 };
     this.panTimer = 0;
     this.pointers = new Map(); // pointerId → {x, y} while down on the pannable stage
     this.pinch = null;
+    this.surround = new SurroundSwitch(this.stage.classList);
     this.ctx = null; // {src, source, out:{w,h}, pending:{fx,fy,r}, pivot: zoomPivot(…)} from the app
     this.ctxLoaded = null; // src decoded into ctxImg
     this.ctxWant = null;
@@ -228,8 +304,15 @@ export class Canvas {
     this.stage.addEventListener('pointermove', (e) => this.panMove(e));
     this.stage.addEventListener('pointerup', (e) => this.panUp(e));
     this.stage.addEventListener('pointercancel', (e) => this.panUp(e, true));
+    // capture lost without a pointerup (e.g. the window lost focus mid-drag): end the drag so the
+    // surroundings can't stay held; after a normal pointerup this finds no drag and does nothing
+    this.stage.addEventListener('lostpointercapture', (e) => this.panUp(e));
     this.stage.addEventListener('wheel', (e) => this.panWheel(e), { passive: false });
-    this.stage.addEventListener('dblclick', (e) => { if (this.pan && this.inImage(e)) this.pan.onReset(); });
+    this.stage.addEventListener('dblclick', (e) => {
+      if (!this.pan || !this.inImage(e)) return;
+      if (this.ctxOn) this.surround.pulse();
+      this.pan.onReset();
+    });
     this.stage.addEventListener('keydown', (e) => this.panKey(e));
     this.stage.addEventListener('blur', () => this.stage.classList.remove('pointer-focus'));
     this.loadbar = root.querySelector('.loadbar');
@@ -294,6 +377,7 @@ export class Canvas {
     this.ctx = null;
     this.hideContext();
     this.crop.show(false);
+    for (const l of this.layers) l.show(false);
   }
 
   /** The context view is on: the app asked for it and its photo is decoded. */
@@ -328,7 +412,7 @@ export class Canvas {
 
   hideContext() {
     this.ctxImg.hidden = true;
-    this.setSurround(false, true);
+    this.surround.clear();
     this.stage.classList.remove('is-context', 'is-moved');
   }
 
@@ -356,6 +440,7 @@ export class Canvas {
     Object.assign(this.frame.style, st);
     Object.assign(this.guides.style, st);
     this.crop.place(this.rect);
+    for (const l of this.layers) l.place(this.rect);
     this.applyPan();
   }
 
@@ -400,7 +485,7 @@ export class Canvas {
     this.stage.classList.toggle('is-pannable', Boolean(opts));
     if (opts) {
       this.stage.tabIndex = 0;
-      this.stage.setAttribute('aria-label', 'Photo position. Drag or use the arrow keys to move the photo under the frame; scroll, pinch or press + and − to resize the head; 0 resets.');
+      this.stage.setAttribute('aria-label', 'Photo position. Drag or use the arrow keys to move the photo under the frame; pinch, Ctrl + scroll or press + and − to resize the head; 0 resets.');
       return;
     }
     this.stage.removeAttribute('tabindex');
@@ -408,6 +493,7 @@ export class Canvas {
     this.panDrag = null;
     this.pinch = null;
     this.pointers.clear();
+    this.surround.clear();
     this.stage.classList.remove('is-panning');
     this.setPanOffset(0, 0);
   }
@@ -424,18 +510,6 @@ export class Canvas {
   resetPan() {
     clearTimeout(this.panTimer);
     this.panShown = { dx: 0, dy: 0 };
-  }
-
-  /** Surroundings on/off: on at once, off after a short linger (`now` skips it). */
-  setSurround(on, now = false) {
-    clearTimeout(this.surroundTimer);
-    if (on) {
-      this.stage.classList.add('is-surround');
-    } else if (now) {
-      this.stage.classList.remove('is-surround');
-    } else if (this.stage.classList.contains('is-surround')) {
-      this.surroundTimer = setTimeout(() => this.stage.classList.remove('is-surround'), SURROUND_LINGER_MS);
-    }
   }
 
   /** Move the shown photo by (dx, dy) stage px until the re-framed preview arrives (CSS only). */
@@ -472,9 +546,10 @@ export class Canvas {
       Object.assign(this.ctxImg.style, { width: `${pl.width}px`, height: `${pl.height}px`, transform: pl.transform });
       this.ctxImg.hidden = false;
       this.stage.classList.add('is-context');
+      // moved but not yet re-rendered: the photo shows inside the frame only (CSS); the surroundings come up
+      // only while the hand is on it (drag / pinch here, wheel / keys pulse) — never because of a pending move
       this.stage.classList.toggle('is-moved', isMoved(m));
-      // the surroundings show only while the photo is being moved (and until the re-framed preview lands)
-      this.setSurround(Boolean(this.panDrag || this.pinch) || isMoved(m));
+      if (this.pinch || this.panDrag?.moved) this.surround.hold();
       this.drawGuides();
       return;
     }
@@ -495,7 +570,6 @@ export class Canvas {
     this.stage.focus({ preventScroll: true });
     try { this.stage.setPointerCapture(e.pointerId); } catch { /* pointer already gone: drag still works inside the stage */ }
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (this.ctxOn) this.setSurround(true);
     if (this.pointers.size === 2 && e.pointerType === 'touch' && !this.pinch) {
       // a second finger turns the gesture into a pinch (head size); the one-finger move is dropped
       const d = this.panDrag;
@@ -505,6 +579,7 @@ export class Canvas {
       const [a, b] = ids.map((id) => this.pointers.get(id));
       this.pinch = { ids, d0: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), ratio: 1 };
       this.stage.classList.add('is-panning');
+      if (this.ctxOn) this.surround.hold();
       return;
     }
     if (this.pinch || this.pointers.size > 1) return;
@@ -539,6 +614,8 @@ export class Canvas {
     }
     d.dx = dx;
     d.dy = dy;
+    // a real drag (not a click) brings up the surroundings; applyPan holds them while it lasts
+    if (!d.moved && (Math.abs(dx - d.base.dx) >= DRAG_SLOP || Math.abs(dy - d.base.dy) >= DRAG_SLOP)) d.moved = true;
     this.setPanOffset(d.dx, d.dy);
   }
 
@@ -549,6 +626,7 @@ export class Canvas {
       if (!p.ids.includes(e.pointerId)) return;
       this.pinch = null;
       this.stage.classList.remove('is-panning');
+      this.surround.release();
       if (!cancelled && Math.abs(p.ratio - 1) > 0.004) this.pan?.onZoomBy?.(p.ratio);
       this.applyPan();
       return;
@@ -557,9 +635,10 @@ export class Canvas {
     if (!d || e.pointerId !== d.id) return;
     this.panDrag = null;
     this.stage.classList.remove('is-panning');
+    this.surround.release(); // fade a moment after letting go, whether or not the new preview is back
     const mx = d.dx - d.base.dx;
     const my = d.dy - d.base.dy;
-    if (cancelled || !this.rect || (Math.abs(mx) < 3 && Math.abs(my) < 3)) {
+    if (cancelled || !this.rect || (Math.abs(mx) < DRAG_SLOP && Math.abs(my) < DRAG_SLOP)) {
       this.setPanOffset(d.base.dx, d.base.dy);
       return;
     }
@@ -571,9 +650,13 @@ export class Canvas {
 
   panWheel(e) {
     if (!this.pan || !this.inImage(e)) return;
+    // scrolling the page past the pinned photo is not a hand on the photo: let it scroll, show nothing
+    if (!wheelResizes(e, scrollsAround(this.stage))) return;
     e.preventDefault();
     const step = clamp(-e.deltaY * (e.ctrlKey ? 0.005 : 0.0002), -0.03, 0.03); // ctrlKey = trackpad pinch
-    if (step) this.pan.onZoom(step);
+    if (!step) return;
+    // at the head-size limit nothing moves, so nothing to show
+    if (this.pan.onZoom(step) !== false && this.ctxOn) this.surround.pulse();
   }
 
   panKey(e) {
@@ -586,6 +669,7 @@ export class Canvas {
     else if (e.key === '-' || e.key === '_') this.pan.onZoom(-0.01);
     else if (e.key === '0') this.pan.onReset();
     else return;
+    if (this.ctxOn) this.surround.pulse();
     e.preventDefault();
   }
 

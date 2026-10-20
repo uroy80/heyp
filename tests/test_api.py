@@ -18,8 +18,8 @@ from PIL import Image
 from fastapi.testclient import TestClient
 
 from app.api import content_disposition, dedupe_name, output_name
-from app.config import Settings
-from app.imaging import io as imgio, segment
+from app.config import VERSION, Settings
+from app.imaging import io as imgio, matting, segment
 from app.main import CSP, create_app
 
 ID_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -82,12 +82,16 @@ def test_health(client):
     res = client.get("/api/health")
     assert res.status_code == 200
     body = res.json()
-    assert body["status"] == "ok" and body["version"] == "1.1.0"
-    assert set(body["features"]) == {"heic", "avif", "face", "segmentation"}
+    assert body["status"] == "ok" and body["version"] == VERSION
+    assert set(body["features"]) == {"heic", "avif", "face", "segmentation", "upscale", "matting", "plates",
+                                     "renderer"}
     assert all(isinstance(v, bool) for v in body["features"].values())
     assert body["features"]["heic"] is True
+    from app.imaging import upscale
+
     assert body["limits"] == {"max_upload_mb": 5, "max_files": 10,
-                              "max_pixels": min(50_000_000, imgio.max_pixels())}  # the stricter limit
+                              "max_pixels": min(50_000_000, imgio.max_pixels()),  # the stricter limit
+                              "upscale_max_input_pixels": upscale.max_input_pixels()}  # the UI warns before a job
 
 
 def test_health_feature_import_error_is_false(client, monkeypatch):
@@ -98,10 +102,13 @@ def test_health_feature_import_error_is_false(client, monkeypatch):
 
 
 def test_formats(client):
-    assert client.get("/api/formats").json() == {
+    body = client.get("/api/formats").json()
+    assert {k: body[k] for k in ("input", "output")} == {  # decoder and encoder lists
         "input": ["heic", "heif", "jpeg", "png", "webp", "avif", "tiff", "bmp", "gif", "ico", "jp2"],
         "output": ["jpeg", "png", "webp", "avif", "heic", "tiff", "bmp", "gif", "pdf"],
     }
+    assert {"psd", "svg", "dng"} <= set(body["images"]) and body["html"] == ["html", "htm"]
+    assert set(body) == {"input", "output", "images", "html"}
 
 
 def test_passport_presets(client):
@@ -152,12 +159,13 @@ def test_upload_applies_exif_orientation(client):
 
 
 def test_upload_partial_failure_reports_errors(client):
+    # anything that is neither an image nor an HTML page is refused, the rest of the request still succeeds
     res = upload(client, ("good.png", encode(photo(), "PNG")), ("notes.txt", b"hello, not an image"))
     assert res.status_code == 200
     body = res.json()
     assert len(body["files"]) == 1
-    assert body["errors"] == [{"name": "notes.txt", "detail": body["errors"][0]["detail"]}]
-    assert body["errors"][0]["detail"]
+    assert body["errors"] == [{"name": "notes.txt",
+                               "detail": "“.txt” files can't be opened (unsupported or damaged file)"}]
     assert len(client.app.state.store.ids()) == 1  # the bad upload was cleaned up
 
 
@@ -420,6 +428,7 @@ def test_passport_and_sheet_through_api(client):
 
 def test_background_without_segmentation_is_503(client, monkeypatch):
     monkeypatch.setattr(segment, "available", lambda: False)
+    monkeypatch.setattr(matting, "available", lambda: False)  # v2: neither background model installed
     (f,) = upload_ok(client, ("a.png", encode(photo(), "PNG")))
     res = process(client, [f["id"]], [{"op": "background", "mode": "replace", "color": "#ffffff"}])
     assert res.status_code == 503 and "unavailable" in res.json()["detail"]
@@ -561,6 +570,7 @@ def test_preview_passport_source_frame(client, monkeypatch):
 def test_delete_drops_pipeline_caches(client, monkeypatch):
     from app.imaging import pipeline
 
+    monkeypatch.setattr(matting, "available", lambda: False)  # "auto" → the (patched) person model
     monkeypatch.setattr(segment, "available", lambda: True)
     monkeypatch.setattr(segment, "person_mask", lambda img, **kw: np.ones((img.height, img.width), np.float32))
     (f,) = upload_ok(client, ("a.png", encode(photo(), "PNG")))

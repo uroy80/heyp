@@ -2,17 +2,21 @@
 
 ``run`` applies ops in order to the EXIF-oriented image and tracks the pipeline DPI; ``render``
 encodes with the output options; ``plan`` estimates a job's cost before any pixel is touched.
+Ops are dispatched through the plug-in registry (``app.imaging.opreg``); the v1 ops are registered
+below as *fallbacks* until ``ops_ext/core.py`` takes them over with identical JSON.
+
+Animations: given ``animation=`` (see :func:`load_animation`, which enforces the frame-bomb guard),
+every op is applied per frame when all of them have a ``frame_apply``; otherwise the first frame is
+used with a warning. ``render`` writes GIF/WebP animations.
+
 Errors: ValueError → 422, PipelineError carries its own status (413 too many pixels, 503 feature
 unavailable), io.ImageError carries 413/415.
 """
 from __future__ import annotations
 
-import json
 import math
-import threading
-from collections import OrderedDict
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
 
@@ -20,10 +24,12 @@ import numpy as np
 from PIL import Image
 from pydantic import BaseModel, ValidationError
 
+from app import schemas
 from app.config import get_settings
-from app.imaging import compress, io, ops as imops, presets
-from app.schemas import (OPS_ADAPTER, OUTPUT_FORMATS, AdjustOp, BackgroundOp, CropAspectOp, CropOp, FlipOp,
-                         OutputSpec, PadOp, PassportOp, ResizeOp, RotateOp, SheetOp, TrimOp, ratio_value)
+from app.imaging import compress, io, opreg, ops as imops, presets
+from app.imaging.opreg import (LRU as _LRU, Ctx, FeatureUnavailable, OpSpec, PipelineError,  # noqa: F401
+                               check_pixels as _check_pixels, memo_key as _opreg_memo_key)
+from app.schemas import OUTPUT_FORMATS, OutputSpec, ratio_value
 
 _UNIT_PER_INCH = {"in": 1.0, "cm": 2.54, "mm": 25.4}
 # Formats whose files carry a resolution we write (JPEG JFIF, PNG pHYs, TIFF tags, BMP, PDF page size, HEIC EXIF).
@@ -44,120 +50,20 @@ ENCODE_MAX_PIXELS = {"avif": 50_000_000, "gif": 100_000_000}
 LOSSLESS_ENCODE_MAX_PIXELS = {"webp": 40_000_000, "avif": 50_000_000}
 
 
-class PipelineError(Exception):
-    """A processing failure with an HTTP status (413 too large, 503 feature unavailable, …)."""
-
-    def __init__(self, status: int, detail: str) -> None:
-        super().__init__(detail)
-        self.status = status
-        self.detail = detail
-
-
-class FeatureUnavailable(PipelineError):
-    def __init__(self, detail: str) -> None:
-        super().__init__(503, detail)
-
-
-@dataclass
-class Ctx:
-    image: Image.Image
-    dpi: tuple[float, float] | None
-    exif: bytes | None
-    icc_profile: bytes | None
-    source_format: str
-    warnings: list[str] = field(default_factory=list)
-    meta: dict[str, Any] = field(default_factory=dict)
-    cache_key: str = ""
-    max_pixels: int = 0
-    alive: Callable[[], bool] | None = None  # False once the upload is deleted (memo puts are undone)
-
-    def warn(self, message: str | None) -> None:
-        if message and message not in self.warnings:
-            self.warnings.append(message)
-
-
-def _nbytes(value: Any) -> int:
-    """Array memory held by a cache value (a mask, or an object with a ``mask`` array)."""
-    if isinstance(value, np.ndarray):
-        return int(value.nbytes)
-    mask = getattr(value, "mask", None)
-    return int(mask.nbytes) if isinstance(mask, np.ndarray) else 0
-
-
-class _LRU:
-    """Tiny thread-safe LRU for expensive per-image analysis (faces, masks).
-
-    Bounded by ``maxsize`` entries and ``max_bytes`` of array data; an entry larger than ``max_bytes``
-    is not stored at all.
-    """
-
-    def __init__(self, maxsize: int, max_bytes: int | None = None) -> None:
-        self.maxsize = maxsize
-        self.max_bytes = max_bytes
-        self._data: OrderedDict[str, Any] = OrderedDict()
-        self._sizes: dict[str, int] = {}
-        self._bytes = 0
-        self._lock = threading.Lock()
-
-    def get(self, key: str) -> Any | None:
-        with self._lock:
-            value = self._data.get(key)
-            if value is not None:
-                self._data.move_to_end(key)
-            return value
-
-    def put(self, key: str, value: Any) -> None:
-        size = _nbytes(value)
-        with self._lock:
-            self._pop(key)
-            if self.max_bytes is not None and size > self.max_bytes:
-                return
-            self._data[key] = value
-            self._sizes[key] = size
-            self._bytes += size
-            while len(self._data) > self.maxsize or self._over_budget():
-                self._pop(next(iter(self._data)))
-
-    def drop_prefix(self, prefix: str) -> None:
-        with self._lock:
-            for key in [k for k in self._data if k.startswith(prefix)]:
-                self._pop(key)
-
-    def clear(self) -> None:
-        with self._lock:
-            self._data.clear()
-            self._sizes.clear()
-            self._bytes = 0
-
-    def keys(self) -> list[str]:
-        with self._lock:
-            return list(self._data)
-
-    @property
-    def nbytes(self) -> int:
-        with self._lock:
-            return self._bytes
-
-    def _over_budget(self) -> bool:
-        return self.max_bytes is not None and self._bytes > self.max_bytes
-
-    def _pop(self, key: str) -> None:
-        self._data.pop(key, None)
-        self._bytes -= self._sizes.pop(key, 0)
-
-
-_analysis_cache = _LRU(8, ANALYSIS_CACHE_BYTES)  # passport.analyze results
-_mask_cache = _LRU(3, MASK_CACHE_BYTES)          # full-resolution person masks (float16) for the background op
+_analysis_cache = opreg.cache("analysis", 8, ANALYSIS_CACHE_BYTES)  # passport.analyze results
+_mask_cache = opreg.cache("background-mask", 3, MASK_CACHE_BYTES)  # full-resolution person masks (float16), background op
 
 
 def forget(cache_key: str) -> None:
     """Drop memoised analysis for an image (call when its upload is deleted)."""
     if cache_key:
-        _analysis_cache.drop_prefix(cache_key + "|")
-        _mask_cache.drop_prefix(cache_key + "|")
+        opreg.forget(cache_key)
+        for lru in (_analysis_cache, _mask_cache):  # may be swapped out by tests
+            lru.drop_prefix(cache_key + "|")
 
 
 def clear_caches() -> None:
+    opreg.clear_caches()
     _analysis_cache.clear()
     _mask_cache.clear()
 
@@ -169,36 +75,143 @@ def _memo_put(ctx: Ctx, cache: _LRU, key: str, value: Any) -> None:
         forget(ctx.cache_key)
 
 
+# ------------------------------------------------------------------ animation
+# Frame decoding/encoding lives in app/imaging/animated.py; the pipeline decides when to use it.
+ANIMATED_SOURCES = frozenset({"gif", "webp", "png"})
+ANIMATED_OUTPUTS = frozenset({"gif", "webp", "png"})  # png → APNG
+
+
+def _animated_module() -> Any:
+    try:
+        from app.imaging import animated
+    except ImportError as exc:  # pragma: no cover - shipped with the app
+        raise FeatureUnavailable(f"Animation support is unavailable: {exc}") from None
+    return animated
+
+
+def still_warning(fmt: str) -> str:
+    """The warning for an animated input written as a still (PNG can animate, but heyp writes APNG only from APNG)."""
+    return f"Saved as a still {fmt.upper()} — only the first frame of the animation was kept"
+
+
+def wants_animation(loaded: io.Loaded, output: OutputSpec | None) -> bool:
+    """True when the source is animated and the requested output can hold an animation."""
+    return animated_output(loaded.format, getattr(loaded, "frames", 1), output)
+
+
+def animated_output(source_format: str | None, frames: int | None, output: OutputSpec | None) -> bool:
+    """``wants_animation`` from an upload's recorded format and frame count (no decoding)."""
+    if not frames or frames <= 1 or source_format not in ANIMATED_SOURCES:
+        return False
+    output = output or OutputSpec()
+    if output.format == "original":
+        return True  # gif → gif, webp → webp, apng → apng
+    return output.format in ANIMATED_OUTPUTS and output.format != "png"  # an explicit PNG means a still
+
+
+def check_animation_size(frames: int, width: int, height: int, *, max_frames: int | None = None,
+                         max_pixels: int | None = None) -> None:
+    """Frame-bomb guard (critic blocking #4): ≤ HEYP_MAX_ANIM_FRAMES frames and ≤ HEYP_MAX_ANIM_PIXELS
+    decoded pixels across all frames — checked from the header, before decoding anything → 413.
+    The limits default to the process settings; the API passes its app's."""
+    settings = get_settings()
+    max_frames = max_frames or settings.max_anim_frames
+    max_pixels = max_pixels or settings.max_anim_pixels
+    if frames > max_frames:
+        raise PipelineError(413, f"The animation has {frames} frames; at most {max_frames} can be "
+                                 "processed. Choose a still format such as JPEG or PNG to use the first frame")
+    if frames * width * height > max_pixels:
+        raise PipelineError(413, f"The animation is too large to process ({frames} frames of {width}×{height} px = "
+                                 f"{frames * width * height / 1e6:.0f} MP; the limit is "
+                                 f"{max_pixels / 1e6:.0f} MP). Choose a still format such as JPEG "
+                                 "or PNG to use the first frame")
+
+
+def load_animation(source: Any, *, check_cancel: Callable[[], None] | None = None,
+                   max_frames: int | None = None, max_pixels: int | None = None) -> Any | None:
+    """Every frame of an animated GIF/WebP/APNG (``animated.Animation``: frames, durations, loop), or
+    None for a still image. Limits are checked before any frame is decoded (413)."""
+    animated = _animated_module()
+    probe = animated.probe(source)
+    if probe is not None:
+        check_animation_size(probe[1], probe[2], probe[3], max_frames=max_frames, max_pixels=max_pixels)
+    return animated.load(source, check_cancel=check_cancel)
+
+
+def _encode_animation(ctx: Ctx, fmt: str, output: OutputSpec) -> bytes:
+    frames = ctx.frames or [ctx.image]
+    durations = list(ctx.durations or [100] * len(frames))
+    return _animated_module().encode(frames, durations, ctx.loop, fmt, quality=output.quality,
+                                     lossless=output.lossless, background=output.background)
+
+
 # ------------------------------------------------------------------ run
 def run(loaded: io.Loaded, ops: Sequence[BaseModel | dict], *, cache_key: str = "",
-        max_pixels: int | None = None, alive: Callable[[], bool] | None = None) -> Ctx:
+        max_pixels: int | None = None, alive: Callable[[], bool] | None = None,
+        animation: Any | None = None, on_progress: Callable[[float, str], None] | None = None,
+        cancel_check: Callable[[], None] | None = None,
+        resolve_file: Callable[[str], Any] | None = None, max_anim_pixels: int | None = None) -> Ctx:
     """Apply ``ops`` in order.
 
     ``cache_key`` (the upload id) enables analysis memoisation; ``alive()`` reports whether that
     upload still exists, so a job finishing after a DELETE leaves nothing cached. ``max_pixels``
-    defaults to HEYP_MAX_PIXELS.
+    defaults to HEYP_MAX_PIXELS. ``animation`` (from :func:`load_animation`) makes the ops run per
+    frame when every op supports it. ``on_progress``/``cancel_check`` come from a job.
     """
     op_list = _coerce_ops(ops)
-    limit = max_pixels or get_settings().max_pixels
+    _ensure_fallbacks()
+    settings = get_settings()
+    limit = max_pixels or settings.max_pixels
     ctx = Ctx(image=loaded.image, dpi=loaded.dpi, exif=loaded.exif, icc_profile=loaded.icc_profile,
-              source_format=loaded.format, cache_key=cache_key, max_pixels=limit, alive=alive)
+              source_format=loaded.format, cache_key=cache_key, max_pixels=limit, alive=alive,
+              on_progress=on_progress, cancel_check=cancel_check, resolve_file=resolve_file)
     if ctx.image.width * ctx.image.height > limit:
         raise PipelineError(413, f"Image is {ctx.image.width * ctx.image.height / 1e6:.0f} MP, "
                                  f"above the {limit / 1e6:.0f} MP limit")
-    for index, op in enumerate(op_list):
-        cap = OP_MAX_PIXELS.get(op.op)
+    specs = [_spec(op.op) for op in op_list]
+    if animation is not None and len(getattr(animation, "frames", ())) > 1:
+        missing = [spec.title for spec in specs if spec.frame_apply is None]
+        if missing:
+            ctx.warn(f"{missing[0]} can't be applied to each frame of an animation — only the first frame was kept")
+        else:
+            ctx.frames, ctx.durations, ctx.loop = list(animation.frames), list(animation.durations), animation.loop
+            ctx.image = ctx.frames[0]
+    for index, (op, spec) in enumerate(zip(op_list, specs)):
+        ctx.check_cancel()
+        cap = OP_MAX_PIXELS.get(op.op) or spec.max_pixels
         if cap and ctx.image.width * ctx.image.height > cap:
-            raise PipelineError(413, f"{OP_LABELS[op.op]} works on images up to {cap / 1e6:.0f} MP (this one is "
+            label = OP_LABELS.get(op.op) or spec.title
+            raise PipelineError(413, f"{label} works on images up to {cap / 1e6:.0f} MP (this one is "
                                      f"{ctx.image.width * ctx.image.height / 1e6:.0f} MP); crop or downsize it first")
-        _HANDLERS[op.op](ctx, op, op_list[:index])
+        if ctx.frames is not None:
+            _apply_frames(ctx, op, spec, max_anim_pixels or settings.max_anim_pixels)
+        else:
+            spec.apply(ctx, op, op_list[:index])
         _check_pixels(ctx.image.width, ctx.image.height, limit, op.op)
-        if op.op != "passport" and op.op not in _KEEPS_GEOMETRY:
+        if op.op != "passport" and op.op not in _KEEPS_GEOMETRY and (spec.geometry or op.op in _V1_GEOMETRY):
             ctx.meta.pop("passport_guides", None)  # its pixel positions no longer match the image
     return ctx
 
 
+def _apply_frames(ctx: Ctx, op: BaseModel, spec: OpSpec, max_total: int) -> None:
+    frames = ctx.frames or []
+    out: list[Image.Image] = []
+    for index, frame in enumerate(frames):
+        ctx.check_cancel()
+        ctx.frame_index = index
+        result = spec.frame_apply(ctx, op, frame)  # type: ignore[misc]
+        if out and result.size != out[0].size:
+            raise PipelineError(422, f"{spec.title} gave the animation frames different sizes")
+        out.append(result)
+        if (index + 1) * result.width * result.height > max_total:
+            raise PipelineError(413, f"{spec.title}: the animation would exceed {max_total / 1e6:.0f} MP in total")
+    ctx.frame_index = 0
+    ctx.frames = out
+    ctx.image = out[0]
+
+
 def passport_guides(ctx: Ctx) -> dict | None:
-    """Passport measurements + preset bands in output px (PLAN v1.1 C2), or None.
+    """Passport measurements + preset bands in output px (PLAN.md §3 PreviewResponse), or None.
 
     Only set when the last geometry-defining op was a passport op, so its coordinates match
     ``ctx.image`` (and the preview's full-resolution width/height).
@@ -211,28 +224,18 @@ def _coerce_ops(ops: Sequence[BaseModel | dict]) -> list[BaseModel]:
         return list(ops)  # type: ignore[arg-type]
     try:
         raw = [op.model_dump() if isinstance(op, BaseModel) else op for op in ops]
-        return list(OPS_ADAPTER.validate_python(raw))
+        return list(schemas.OPS_ADAPTER.validate_python(raw))
     except ValidationError as exc:
         first = exc.errors()[0]
         loc = ".".join(str(p) for p in first.get("loc", ()))
         raise ValueError(f"invalid op ({loc}): {first.get('msg', 'invalid')}") from None
 
 
-def _check_pixels(width: float, height: float, limit: int, what: str) -> None:
-    pixels = width * height
-    if pixels > limit:
-        raise PipelineError(413, f"{what}: result would be {pixels / 1e6:.0f} MP, above the {limit / 1e6:.0f} MP limit")
-
-
-def _memo_key(ctx: Ctx, kind: str, prefix: Sequence[BaseModel]) -> str | None:
-    if not ctx.cache_key:
-        return None
-    chain = json.dumps([op.model_dump(mode="json") for op in prefix], sort_keys=True, separators=(",", ":"))
-    return f"{ctx.cache_key}|{kind}|{chain}"
+_memo_key = _opreg_memo_key
 
 
 # ------------------------------------------------------------------ op handlers
-def _rotate(ctx: Ctx, op: RotateOp, _prefix: Sequence[BaseModel]) -> None:
+def _rotate(ctx: Ctx, op: Any, _prefix: Sequence[BaseModel]) -> None:
     if op.expand and op.angle % 90:
         rad = math.radians(op.angle)
         w, h = ctx.image.size
@@ -242,15 +245,15 @@ def _rotate(ctx: Ctx, op: RotateOp, _prefix: Sequence[BaseModel]) -> None:
     ctx.image = imops.rotate(ctx.image, op.angle, expand=op.expand, fill=op.fill)
 
 
-def _flip(ctx: Ctx, op: FlipOp, _prefix: Sequence[BaseModel]) -> None:
+def _flip(ctx: Ctx, op: Any, _prefix: Sequence[BaseModel]) -> None:
     ctx.image = imops.flip(ctx.image, op.direction)
 
 
-def _crop(ctx: Ctx, op: CropOp, _prefix: Sequence[BaseModel]) -> None:
+def _crop(ctx: Ctx, op: Any, _prefix: Sequence[BaseModel]) -> None:
     ctx.image = imops.crop(ctx.image, op.x, op.y, op.width, op.height, unit=op.unit)
 
 
-def _crop_aspect(ctx: Ctx, op: CropAspectOp, _prefix: Sequence[BaseModel]) -> None:
+def _crop_aspect(ctx: Ctx, op: Any, _prefix: Sequence[BaseModel]) -> None:
     faces = None
     if op.anchor == "face":
         faces = _detect_faces(ctx.image)
@@ -267,11 +270,11 @@ def _detect_faces(img: Image.Image) -> list:
     return face.detect(img)
 
 
-def _trim(ctx: Ctx, op: TrimOp, _prefix: Sequence[BaseModel]) -> None:
+def _trim(ctx: Ctx, op: Any, _prefix: Sequence[BaseModel]) -> None:
     ctx.image = imops.trim(ctx.image, tolerance=op.tolerance, padding=op.padding)
 
 
-def _resize_estimate(size: tuple[int, int], op: ResizeOp) -> tuple[float, float]:
+def _resize_estimate(size: tuple[int, int], op: Any) -> tuple[float, float]:
     """Upper bound of the resize result, used to refuse absurd sizes before allocating them."""
     w, h = size
 
@@ -302,7 +305,7 @@ def _resize_estimate(size: tuple[int, int], op: ResizeOp) -> tuple[float, float]
     return out
 
 
-def _resize(ctx: Ctx, op: ResizeOp, _prefix: Sequence[BaseModel]) -> None:
+def _resize(ctx: Ctx, op: Any, _prefix: Sequence[BaseModel]) -> None:
     est_w, est_h = _resize_estimate(ctx.image.size, op)
     _check_pixels(est_w, est_h, ctx.max_pixels, "resize")
     ctx.image = imops.resize(
@@ -314,13 +317,13 @@ def _resize(ctx: Ctx, op: ResizeOp, _prefix: Sequence[BaseModel]) -> None:
         ctx.dpi = (float(op.dpi), float(op.dpi))
 
 
-def _pad(ctx: Ctx, op: PadOp, _prefix: Sequence[BaseModel]) -> None:
+def _pad(ctx: Ctx, op: Any, _prefix: Sequence[BaseModel]) -> None:
     w, h = ctx.image.size
     _check_pixels(w + op.left + op.right, h + op.top + op.bottom, ctx.max_pixels, "pad")
     ctx.image = imops.pad(ctx.image, top=op.top, right=op.right, bottom=op.bottom, left=op.left, color=op.color)
 
 
-def _adjust(ctx: Ctx, op: AdjustOp, _prefix: Sequence[BaseModel]) -> None:
+def _adjust(ctx: Ctx, op: Any, _prefix: Sequence[BaseModel]) -> None:
     ctx.image = imops.adjust(ctx.image, brightness=op.brightness, contrast=op.contrast,
                              saturation=op.saturation, sharpness=op.sharpness,
                              grayscale=op.grayscale, auto_contrast=op.auto_contrast)
@@ -336,7 +339,7 @@ def _segment_module():
     return segment
 
 
-def _background(ctx: Ctx, op: BackgroundOp, prefix: Sequence[BaseModel]) -> None:
+def _background(ctx: Ctx, op: Any, prefix: Sequence[BaseModel]) -> None:
     segment = _segment_module()
     key = _memo_key(ctx, "mask", prefix)
     mask = _mask_cache.get(key) if key else None
@@ -351,7 +354,7 @@ def _background(ctx: Ctx, op: BackgroundOp, prefix: Sequence[BaseModel]) -> None
     ctx.image = segment.composite(ctx.image, np.asarray(mask, dtype=np.float32), color)
 
 
-def _passport_preset(op: PassportOp) -> presets.PassportPreset:
+def _passport_preset(op: Any) -> presets.PassportPreset:
     if op.preset == "custom":
         assert op.custom is not None  # enforced by the schema
         c = op.custom
@@ -373,7 +376,7 @@ def _passport_module():
     return passport
 
 
-def _passport(ctx: Ctx, op: PassportOp, prefix: Sequence[BaseModel]) -> None:
+def _passport(ctx: Ctx, op: Any, prefix: Sequence[BaseModel]) -> None:
     preset = _passport_preset(op)
     out_w, out_h = preset.output_size()
     _check_pixels(out_w, out_h, ctx.max_pixels, "passport")
@@ -455,7 +458,7 @@ def _source_frame(value: Any) -> dict | None:
         return None
 
 
-def sheet_dpi(op: SheetOp, pipeline_dpi: tuple[float, float] | None) -> int:
+def sheet_dpi(op: Any, pipeline_dpi: tuple[float, float] | None) -> int:
     """Explicit ``op.dpi``, else the pipeline dpi (e.g. a 400-dpi preset) clamped to 300–600, else 300."""
     if op.dpi:
         return op.dpi
@@ -465,7 +468,7 @@ def sheet_dpi(op: SheetOp, pipeline_dpi: tuple[float, float] | None) -> int:
     return SHEET_DEFAULT_DPI
 
 
-def _sheet(ctx: Ctx, op: SheetOp, _prefix: Sequence[BaseModel]) -> None:
+def _sheet(ctx: Ctx, op: Any, _prefix: Sequence[BaseModel]) -> None:
     paper = presets.PAPERS.get(op.paper)
     if paper is None:
         raise ValueError(f"unknown paper {op.paper!r} (choose from {', '.join(presets.PAPERS)})")
@@ -510,39 +513,55 @@ class Plan:
 
 
 def plan(size: tuple[int, int], ops: Sequence[BaseModel | dict], output: OutputSpec | None = None, *,
-         source_format: str = "jpeg", dpi: float | None = None, decode: bool = True) -> Plan:
+         source_format: str = "jpeg", dpi: float | None = None, decode: bool = True, frames: int = 1) -> Plan:
     """Estimate one file's job (decode → ops → encode) from its size alone, before running it.
 
     Sizes are upper bounds per op (crop keeps at most the input, passport/sheet use their fixed
-    frames). Raises ValueError for ops that can't run at all (unknown preset or paper).
+    frames). ``frames`` > 1 plans an animation (every frame decoded, processed and encoded; all kept
+    in memory). Raises ValueError for ops that can't run at all (unknown preset or paper).
     """
     output = output or OutputSpec()
+    _ensure_fallbacks()
+    n = max(1, int(frames))
     w, h = (max(1.0, float(v)) for v in size)
     cur = src = w * h
-    work = DECODE_COST * src / _MP if decode else 0.0
+    work = DECODE_COST * src * n / _MP if decode else 0.0
     step = 8 * src if decode else 0.0  # decoding briefly holds two copies
     peak_px = src
     for op in _coerce_ops(ops):
-        (w, h), dpi = _planned_size((w, h), op, dpi)
+        spec = _spec(op.op)
+        if spec.plan_size is not None:
+            (w, h), dpi = spec.plan_size((w, h), op, dpi)
+            w, h = max(1.0, float(w)), max(1.0, float(h))
+        else:
+            (w, h), dpi = _planned_size((w, h), op, dpi)
         out = w * h
-        work += OP_FIXED_COST.get(op.op, 0.0) + OP_COST[op.op] * max(cur, out) / _MP
-        step = max(step, 4 * (src + cur + out) + OP_EXTRA_BYTES.get(op.op, 0) * cur)
+        if opreg.is_fallback(op.op):  # a v1 handler (the shim): the v1 measurements
+            cost, fixed = OP_COST[op.op], OP_FIXED_COST.get(op.op, 0.0)
+            extra_bytes, fixed_bytes = OP_EXTRA_BYTES.get(op.op, 0), 0
+        else:  # a plug-in: its own estimates (e.g. BiRefNet's fixed model cost)
+            cost, fixed, extra_bytes, fixed_bytes = spec.cost, spec.fixed_cost, spec.extra_bytes, spec.fixed_bytes
+        work += fixed + cost * max(cur, out) * n / _MP
+        step = max(step, 4 * (src + cur + out) + extra_bytes * cur + fixed_bytes)
         cur, peak_px = out, max(peak_px, out)
     fmt = output.format if output.format != "original" else (source_format or "jpeg")
     lossless = output.lossless and fmt in LOSSLESS_ENCODE_COST
     cost = LOSSLESS_ENCODE_COST[fmt] if lossless else ENCODE_COST.get(fmt, 0.1)
     if output.max_kb is not None or output.min_kb is not None:
         cost *= TARGET_SIZE_FACTOR
-    work += cost * cur / _MP
+    work += cost * cur * n / _MP
     extra = LOSSLESS_EXTRA_BYTES[fmt] if lossless else ENCODE_EXTRA_BYTES.get(fmt, 4)
     step = max(step, 4 * src + (4 + extra) * cur)
+    if n > 1:  # every source and result frame is held at once
+        step += 4 * (n - 1) * (src + cur)
     return Plan(work=round(work, 3), peak_bytes=int(step), peak_pixels=int(peak_px))
 
 
-def _planned_size(size: tuple[float, float], op: BaseModel, dpi: float | None) -> tuple[tuple[float, float], float | None]:
-    """Upper bound of an op's output size, and the pipeline dpi after it."""
+def _planned_size(size: tuple[float, float], op: Any, dpi: float | None) -> tuple[tuple[float, float], float | None]:
+    """Upper bound of a v1 op's output size, and the pipeline dpi after it (others keep the size)."""
     w, h = size
-    if isinstance(op, RotateOp):
+    name = op.op
+    if name == "rotate":
         if op.angle % 90 == 0:
             return ((h, w) if op.angle % 180 else (w, h)), dpi
         if not op.expand:
@@ -550,24 +569,24 @@ def _planned_size(size: tuple[float, float], op: BaseModel, dpi: float | None) -
         rad = math.radians(op.angle)
         c, s = abs(math.cos(rad)), abs(math.sin(rad))
         return (w * c + h * s, w * s + h * c), dpi
-    if isinstance(op, CropOp):
+    if name == "crop":
         if op.unit == "fraction":
             return (max(1.0, w * op.width), max(1.0, h * op.height)), dpi
         return (max(1.0, min(w, op.width)), max(1.0, min(h, op.height))), dpi
-    if isinstance(op, CropAspectOp):
+    if name == "crop_aspect":
         r = ratio_value(op.ratio)
         return ((h * r, h) if w / h > r else (w, w / r)), dpi
-    if isinstance(op, TrimOp):
+    if name == "trim":
         return (w + 2 * op.padding, h + 2 * op.padding), dpi
-    if isinstance(op, ResizeOp):
+    if name == "resize":
         out = _resize_estimate((w, h), op)
         return (max(1.0, out[0]), max(1.0, out[1])), (float(op.dpi) if op.unit != "px" else dpi)
-    if isinstance(op, PadOp):
+    if name == "pad":
         return (w + op.left + op.right, h + op.top + op.bottom), dpi
-    if isinstance(op, PassportOp):
+    if name == "passport":
         preset = _passport_preset(op)
         return tuple(float(v) for v in preset.output_size()), float(preset.dpi)  # type: ignore[return-value]
-    if isinstance(op, SheetOp):
+    if name == "sheet":
         paper = presets.PAPERS.get(op.paper)
         if paper is None:
             raise ValueError(f"unknown paper {op.paper!r} (choose from {', '.join(presets.PAPERS)})")
@@ -576,11 +595,86 @@ def _planned_size(size: tuple[float, float], op: BaseModel, dpi: float | None) -
     return (w, h), dpi
 
 
+# ------------------------------------------------------------------ v1 ops as registry fallbacks
 _HANDLERS: dict[str, Callable[[Ctx, Any, Sequence[BaseModel]], None]] = {
     "rotate": _rotate, "flip": _flip, "crop": _crop, "crop_aspect": _crop_aspect, "trim": _trim,
     "resize": _resize, "pad": _pad, "adjust": _adjust, "background": _background,
     "passport": _passport, "sheet": _sheet,
 }
+_V1_GEOMETRY = frozenset({"rotate", "flip", "crop", "crop_aspect", "trim", "resize", "pad", "sheet"})
+
+
+def _frame_rotate(ctx: Ctx, op: Any, image: Image.Image) -> Image.Image:
+    return imops.rotate(image, op.angle, expand=op.expand, fill=op.fill)
+
+
+def _frame_flip(ctx: Ctx, op: Any, image: Image.Image) -> Image.Image:
+    return imops.flip(image, op.direction)
+
+
+def _frame_crop(ctx: Ctx, op: Any, image: Image.Image) -> Image.Image:
+    return imops.crop(image, op.x, op.y, op.width, op.height, unit=op.unit)
+
+
+def _frame_resize(ctx: Ctx, op: Any, image: Image.Image) -> Image.Image:
+    if op.unit != "px":
+        ctx.dpi = (float(op.dpi), float(op.dpi))
+    return imops.resize(image, op.mode, width=op.width, height=op.height, scale=op.scale, size=op.size,
+                        megapixels=op.megapixels, unit=op.unit, dpi=op.dpi, upscale=op.upscale,
+                        resample=op.resample, background=op.background)
+
+
+def _frame_pad(ctx: Ctx, op: Any, image: Image.Image) -> Image.Image:
+    return imops.pad(image, top=op.top, right=op.right, bottom=op.bottom, left=op.left, color=op.color)
+
+
+def _frame_adjust(ctx: Ctx, op: Any, image: Image.Image) -> Image.Image:
+    alpha = image.getchannel("A") if image.mode == "RGBA" else None
+    out = imops.adjust(image.convert("RGB") if alpha is not None else image, brightness=op.brightness,
+                       contrast=op.contrast, saturation=op.saturation, sharpness=op.sharpness,
+                       grayscale=op.grayscale, auto_contrast=op.auto_contrast)
+    if alpha is not None:
+        out = out.convert("RGBA")
+        out.putalpha(alpha)
+    return out
+
+
+_FRAME_HANDLERS: dict[str, Callable[[Ctx, Any, Image.Image], Image.Image]] = {
+    "rotate": _frame_rotate, "flip": _frame_flip, "crop": _frame_crop, "resize": _frame_resize,
+    "pad": _frame_pad, "adjust": _frame_adjust,
+}
+_fallbacks_done = False
+
+
+def _legacy_apply(name: str) -> Callable[[Ctx, Any, Sequence[BaseModel]], None]:
+    def apply(ctx: Ctx, op: Any, prefix: Sequence[BaseModel]) -> None:
+        _HANDLERS[name](ctx, op, prefix)  # looked up per call so tests can patch the module
+
+    apply.__qualname__ = f"legacy_{name}"
+    return apply
+
+
+def _ensure_fallbacks() -> None:
+    """Register the v1 handlers for every v1 op that no ``ops_ext`` plug-in has claimed (the shim)."""
+    global _fallbacks_done
+    if _fallbacks_done:
+        return
+    for model in schemas.V1_OPS:
+        name = opreg._literal_name(model)
+        assert name is not None
+        opreg.register_op(OpSpec(name, model, _legacy_apply(name), frame_apply=_FRAME_HANDLERS.get(name),
+                                 geometry=name in _V1_GEOMETRY, cost=OP_COST[name],
+                                 fixed_cost=OP_FIXED_COST.get(name, 0.0), extra_bytes=OP_EXTRA_BYTES.get(name, 0),
+                                 max_pixels=OP_MAX_PIXELS.get(name), label=OP_LABELS.get(name, "")),
+                          fallback=True)
+    _fallbacks_done = True
+
+
+def _spec(name: str) -> OpSpec:
+    try:
+        return opreg.get_op(name)
+    except KeyError:
+        raise ValueError(f"unknown op {name!r}") from None
 
 
 # ------------------------------------------------------------------ render
@@ -619,6 +713,14 @@ def render(ctx: Ctx, output: OutputSpec | dict | None = None) -> tuple[bytes, st
                   strip_metadata=output.strip_metadata, strip_gps=output.strip_gps,
                   colorspace=output.colorspace, background=output.background)
     width, height = img.size
+    if ctx.animated:
+        if fmt in ANIMATED_OUTPUTS and (fmt != "png" or ctx.source_format == "png"):
+            if output.max_kb is not None or output.min_kb is not None:
+                warnings.append("A target file size isn't supported for animations; the size was not adjusted")
+            data = _encode_animation(ctx, fmt, output)
+            return data, fmt, {"width": width, "height": height, "dpi": None, "warnings": warnings,
+                               "encode": None, "frames": len(ctx.frames or ())}
+        warnings.append(still_warning(fmt))
     cap = (LOSSLESS_ENCODE_MAX_PIXELS.get(fmt) if output.lossless else None) or ENCODE_MAX_PIXELS.get(fmt)
     if cap and width * height > cap:
         kind = f"{'Lossless ' if output.lossless else ''}{fmt.upper()}"
@@ -676,3 +778,6 @@ def _dpi_json(dpi: tuple[float, float] | None) -> list[float] | None:
     if not dpi:
         return None
     return [int(v) if float(v).is_integer() else round(float(v), 2) for v in dpi]
+
+
+_ensure_fallbacks()

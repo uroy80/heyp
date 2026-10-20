@@ -1,0 +1,98 @@
+# heyp sidecar services (HTML → image): the reference definition that docker-compose.yml and deploy/compose.prod.yml
+# follow. Self-contained (paths are relative to services/), so the sidecars can be built and checked on their own:
+#
+#   HEYP_EGRESS_SECRET=$(openssl rand -hex 32) docker compose -f services/compose.services.yml --profile render up -d --build
+#
+# Topology:
+#   heyp ──Unix socket (volume render-sock)──▶ renderer     NO IP route between them
+#   renderer ──▶ egress ──▶ internet     network render-sbx: internal + isolated, members renderer + egress only;
+#                                        egress-wan: the only route out, egress only
+# Every service: non-root, read-only rootfs, cap_drop ALL, no-new-privileges, pids/memory/cpu limits, GET /healthz.
+# Secrets/required settings (.env or /etc/heyp/heyp.env):
+#   HEYP_EGRESS_SECRET       openssl rand -hex 32 (control API between renderer and egress)
+#   HEYP_EGRESS_DENY_CIDRS   the host's own public IPv4/IPv6 (/32, /128) — REQUIRED on a shared VPS
+# Docker Engine >= 28 for gateway_mode_ipv4=isolated (older: com.docker.network.bridge.inhibit_ipv4: "true").
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  logging:
+    driver: local
+    options: {max-size: 10m, max-file: "3"}
+
+x-heyp-app:   # merge into the heyp app service
+  environment:
+    HEYP_RENDERER_SOCKET: /run/renderer/r.sock   # missing socket → the capture tool reports available:false
+  volumes:
+    - render-sock:/run/renderer                  # both images own /run/renderer as uid 10001
+
+services:
+  renderer:
+    <<: *hardening
+    profiles: [render]
+    build: {context: ./renderer, target: runtime}
+    image: ${HEYP_RENDERER_IMAGE:-heyp-renderer:latest}
+    security_opt:
+      - no-new-privileges:true
+      # Docker's default profile + unconditional clone/unshare/chroot: Chromium's own sandbox runs (no caps).
+      - seccomp=./seccomp/chromium-userns.json
+    environment:
+      HOME: /tmp
+      HEYP_RENDER_SOCKET: /run/renderer/r.sock
+      HEYP_RENDER_EGRESS_HOST: egress
+      HEYP_RENDER_EGRESS_SECRET: ${HEYP_EGRESS_SECRET:?set HEYP_EGRESS_SECRET (openssl rand -hex 32)}
+      HEYP_RENDER_CHROMIUM_SANDBOX: "1"
+      HEYP_RENDER_MAX_CONCURRENT: "1"   # must be <= HEYP_EGRESS_SLOTS
+      HEYP_RENDER_MAX_QUEUE: "4"
+      HEYP_RENDER_HARD_TIMEOUT: "45"
+      HEYP_RENDER_MAX_OUTPUT_MB: "50"
+    tmpfs: ["/tmp:size=${HEYP_RENDERER_TMP_SIZE:-512m},mode=1777"]
+    volumes: [render-sock:/run/renderer]
+    mem_limit: ${HEYP_RENDERER_MEM_LIMIT:-1g}   # measured: ~0.7 GiB peak for one heavy full-page render
+    cpus: ${HEYP_RENDERER_CPUS:-1.0}
+    pids_limit: 512
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(socket.AF_UNIX); s.settimeout(4); s.connect('/run/renderer/r.sock'); s.sendall(b'GET /healthz HTTP/1.0\\r\\nHost: renderer\\r\\n\\r\\n'); assert b' 200 ' in s.recv(64)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+    depends_on:
+      egress: {condition: service_healthy}
+    networks: [render-sbx]          # its only neighbour is egress; no route to heyp, the host or the internet
+
+  egress:
+    <<: *hardening
+    profiles: [render]
+    build: {context: ./egress, target: runtime}
+    image: ${HEYP_EGRESS_IMAGE:-heyp-egress:latest}
+    environment:
+      HEYP_EGRESS_SECRET: ${HEYP_EGRESS_SECRET:?set HEYP_EGRESS_SECRET (openssl rand -hex 32)}
+      HEYP_EGRESS_SLOTS: "1"
+      HEYP_EGRESS_ALLOW_PORTS: "80,443"
+      HEYP_EGRESS_MAX_JOB_BYTES: "52428800"   # 50 MB per render, both directions
+      # This server's own public addresses (other sites/panels on the VPS would trust the proxy's source address).
+      # Private, loopback, link-local, metadata, CGNAT, NAT64, 6to4, ULA ... are always denied.
+      HEYP_EGRESS_DENY_CIDRS: ${HEYP_EGRESS_DENY_CIDRS:-}
+      HEYP_EGRESS_DENY_LOCAL_NETS: "1"
+      HEYP_EGRESS_LOG_HOSTS: "0"      # never log capture destinations (/privacy); "1" only on a test bed
+    mem_limit: 128m                 # measured peak ~21 MiB
+    cpus: 0.25
+    pids_limit: 64
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1', 3129), 3); s.sendall(b'GET /healthz HTTP/1.0\\r\\n\\r\\n'); assert b' 200 ' in s.recv(64)"]
+      interval: 30s
+      timeout: 4s
+      start_period: 5s
+    networks: [render-sbx, egress-wan]
+
+networks:
+  render-sbx:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+  egress-wan: {}
+
+volumes:
+  render-sock: {}

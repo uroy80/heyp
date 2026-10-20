@@ -1,82 +1,70 @@
-# heyp
+# heyp :)
 
-**heyp** is a small, self-hosted photo toolbox that runs in one Docker container. Convert iPhone HEIC photos
-to JPG or PNG and do the everyday photo jobs in one place: resize, set DPI, crop and auto-crop, compress to
-a target size, make passport photos, replace the background, and read or strip metadata. It has a quiet,
-newspaper-style web UI and nothing leaves your machine.
+**heyp** is an image toolbox — free, open-source (AGPL-3.0) and self-hostable, with a quiet newspaper-style
+("Broadsheet") web UI. Convert iPhone HEIC photos, resize, crop, compress to a target size, make passport photos,
+remove backgrounds, upscale, watermark, blur faces, make memes and GIFs, and capture web pages as images. It runs at
+[heyp.edgr.in](https://heyp.edgr.in); its sibling for PDFs, [heypdf](https://github.com/uroy80/heypdf), is a separate
+app at [heypdf.edgr.in](https://heypdf.edgr.in).
 
 ```
 docker compose up -d --build   →   http://localhost:8080
 ```
 
-## Features
+Run it on your own computer (the default **local** mode), or host it publicly (**hosted** mode with a privacy policy,
+terms, abuse limits and automatic deletion — see [deploy/DEPLOY.md](deploy/DEPLOY.md)).
 
-- **Open anything**: HEIC/HEIF, JPEG, PNG, WebP, AVIF, TIFF, BMP, GIF (first frame), ICO and JPEG 2000.
-- **Convert** to JPEG, PNG, WebP, AVIF, HEIC, TIFF, BMP, GIF or PDF (several images can go into one PDF).
-  Output is correct by default:
-  - EXIF orientation is applied exactly once.
-  - Wide-gamut photos are converted to sRGB: Display-P3 ICC profiles, and the colour info of HEIC/AVIF files
-    that carry no profile (HDR PQ/HLG files are left as they are, not tone-mapped).
-  - Transparency is flattened onto a colour you choose for formats that can't store it; palette formats keep
-    fully transparent and fully opaque pixels exact.
-  - DPI is written wherever the format supports it.
-  - HEIC quality is mapped so that quality 90 gives files about as large as JPEG at 90.
-- **Resize**:
-  - Modes: fit, fill, pad, stretch, percent, long or short edge, megapixels.
-  - Print sizes in in/cm/mm at any DPI, or change the DPI only without resampling.
-  - Presets for screens, social media, A4 and 4×6 in prints.
-  - "Don't enlarge": small photos stay as they are; with Pad the canvas is still padded to the exact size.
-- **Crop**:
-  - A free box or fixed ratios (1:1, 4:5, 3:2, 16:9, 35:45 and more), snapped to whole pixels, per photo.
-  - **Auto trim** removes uniform borders, **Smart crop** picks the crop by saliency, **Face crop** centres on
-    the largest face. **Apply to all** copies a crop to every photo.
-- **Compress to a target size**, e.g. "under 50 KB" for exam and visa forms. It searches quality first and
-  only downscales if it has to, then shows the quality and scale it used. Photos above 12 MP search on a small
-  proxy, so even 48 MP targets take seconds.
-- **Passport and ID photos**:
-  - 20 presets checked against official government sources: US (passport/visa and DV lottery), UK, Schengen,
-    France, Netherlands, India (passport, visa, OCI), China, Japan, South Korea, Singapore, Malaysia, Canada
-    (passport, online renewal, visa), Australia, New Zealand (visa), South Africa. Plus custom sizes.
-  - Face-aware framing to each preset's head-size and eye-line rules, measured to the top of the skull where the
-    authority says so (Canada, France, Korea, Schengen, UK).
-  - Head levelling: a tilt of 1–15° is straightened automatically.
-  - Guides on the picture show the allowed head and eye bands and where your photo lands.
-  - White or coloured background replacement, off by default for countries that forbid edited backgrounds
-    (Canada, India, Korea, Singapore, UK), with a warning if you turn it on anyway.
-  - Print sheets for 4×6 in, 5×7 in, 10×15 cm, 13×18 cm, A5, A4 and Letter, with cut lines, at the preset's
-    print resolution.
-- **Background**: remove it (transparent PNG/WebP) or replace it with a colour, using on-device person
-  segmentation (U²-Net).
-- **Edit**: rotate, flip, straighten, brightness, contrast, saturation, sharpness, grayscale and auto-contrast.
-- **Info**: dimensions, print size, colour profile, camera details, a GPS warning and the full EXIF table.
-  Metadata and GPS are removed on export by default.
-- **Batch**: drop many files at once. Every download is a single request that comes back as one file, a ZIP,
-  or one combined PDF, per-photo crops included. Warnings for any file in the batch are shown afterwards.
+## Tools
+
+- **Open anything**: HEIC/HEIF, JPEG, PNG, WebP, AVIF, TIFF, BMP, GIF and animated WebP, ICO, JPEG 2000, PSD/PSB,
+  SVG and camera RAW (DNG, CR2, CR3, NEF, ARW, RAF, ORF, RW2, PEF, SRW).
+- **Convert** to JPEG, PNG, WebP, AVIF, HEIC, TIFF, BMP, GIF or PDF (several photos → one PDF), correctly by default:
+  EXIF orientation applied once, wide-gamut photos converted to sRGB, transparency flattened onto a colour you
+  choose, DPI written.
+- **Resize** (fit, fill, pad, percent, edges, megapixels, print sizes at any DPI), **crop** (free, fixed ratios,
+  auto trim, smart crop, face crop, apply to all), **rotate** (all, or only landscape/portrait photos of a batch).
+- **Compress to a target size** ("under 50 KB" for exam and visa forms), or in the original format: SVG
+  optimisation, animated-GIF compression and palette PNGs.
+- **Upscale** 2× / 4× with Real-ESRGAN (balanced or strong).
+- **Remove or replace the background** of any subject (BiRefNet) or of people (U²-Net).
+- **Blur faces, number plates or any area**: detection suggests boxes you can adjust; blur, pixelate or solid fill.
+- **Watermark** with text or an image — position, rotation, opacity, or a tiled mosaic.
+- **Meme generator** on your photo or a blank canvas (Anton captions, outline, auto size).
+- **Photo editor**: filters, frames, text, stickers (OpenMoji and our own), shapes and brush.
+- **Make GIF** (or animated WebP) from photos: order, delay, loop, size.
+- **HTML → image**: capture a web page (or an uploaded HTML file) as JPG/PNG — the optional `render` service.
+- **Passport and ID photos**: 20 presets checked against official government sources, face-aware framing to each
+  preset's head-size and eye-line rules, head levelling, guides, background replacement where allowed, print
+  sheets. Drag the photo under the fixed frame to align it; the dimmed surroundings appear only while you move it.
+- **Info**: dimensions, print size, colour profile, camera details, GPS warning, full EXIF. Metadata and GPS are
+  removed on export by default.
+- **Batch** everything; "Continue with" passes a result to the next heyp tool.
+
+The dateline's "heyp · heypdf" switch (and an "Open heypdf" entry under "Continue with") links to heypdf when
+`HEYP_SIBLING_URL` names it. It is a plain link: the two apps share nothing, and no file moves from one to the other.
+
+**Deliberately not included:** face *recognition* (detection finds where a face is, never whose it is), meme
+template images we don't own (you upload yours; we ship blank canvases), accounts and cloud storage.
 
 ## Quick start
 
-You need Docker with Compose v2.
+You need Docker with Compose v2 (≥ 2.24).
 
 ```bash
-docker compose up -d --build                     # first build downloads ~180 MB of ONNX models (sha256-checked)
-open http://localhost:8080                       # or just visit it in a browser
-docker compose logs -f                           # optional: follow logs
+docker compose up -d --build                     # the app (the first build fetches ~375 MB of models, sha256-checked)
+docker compose --profile render up -d --build    # + HTML → image (renderer + egress proxy)
 docker compose down                              # stop (uploads are wiped)
 ```
 
-To use a different port, run `HEYP_PORT=9000 docker compose up -d`.
+The build takes heyp's own model exports (Real-ESRGAN, BiRefNet) from this repository's `models-v1` release; if it
+can't reach it, pass a copy with `docker compose build --build-arg HEYP_MODELS_MIRROR=https://…` (deploy/DEPLOY.md
+§7.1). To use another port: `HEYP_PORT=9000 docker compose up -d`.
 
-**Using the UI.** The page reads like a newspaper front page: the photo is "Fig. 1", the tools are numbered
-sections 01–08 on the left (the numbers are their keyboard shortcuts), and Export is pinned at the foot of the
-options panel. Drop photos onto the page, pick them with **Add photos**, or paste with ⌘/Ctrl V. The canvas
-shows a live preview at full-resolution quality, and the line below it shows the result's size, file size and,
-when compressing, the quality used. Hold **Space** (or the Compare button) to see the original. **Download**
-exports the current settings. Removing a photo can be undone for 8 seconds. Light and dark themes follow your
-system, or use the toggle.
+**Using the UI.** The page reads like a newspaper: the photo is "Fig. 1", the tools are numbered sections in the
+rail (`1`–`9` jump to the first nine, `?` lists everything), Export is pinned at the foot of the options panel.
 
 | Shortcut | Action |
 |---|---|
-| `1`–`8` | Switch tools |
+| `1`–`9` | Switch tools (`?` shows all tools and shortcuts) |
 | `Space` (hold) | Show the original |
 | `R` / `Shift R` | Rotate right / left |
 | `Ctrl/⌘ S` | Download |
@@ -85,198 +73,146 @@ system, or use the toggle.
 | `Del` | Remove the current photo (with Undo) |
 | `Esc` | Revert crop changes |
 | Arrows | Nudge the crop box (`Shift` ×10, `Alt` resizes) |
-| `?` | Show all shortcuts |
+
+## Privacy and legal
+
+- Every tool runs on the heyp server, including face and plate detection, background removal and upscaling (the
+  models ship in the image). heyp makes no outbound connections of its own; the only exception is the optional
+  renderer, which fetches the web page you ask it to capture through the egress proxy.
+- **Local mode** (default): `/privacy` and `/terms` show a short notice that the person running the copy is
+  responsible for it, and what the software does.
+- **Hosted mode** (`HEYP_MODE=hosted`): `/privacy`, `/terms` and `/credits` are rendered from [`legal/`](legal/) and
+  [`CREDITS.md`](CREDITS.md) with the operator's settings, and every claim matches the code and the deployment
+  files: no accounts, no cookies, no analytics; uploads live in RAM and are deleted when removed, when the tab
+  closes, `HEYP_TTL_MINUTES` after last use and at most `HEYP_HARD_TTL_MINUTES` after upload; no app access log;
+  Apache logs without query strings, browser type, referrer or file names, kept 14 days. `tests/test_legal.py`
+  checks what can be checked mechanically.
+- Exports drop EXIF metadata and GPS by default.
+- The whole UI is served from the same origin (CSP `default-src 'self'`); fonts are bundled.
 
 ## Security defaults
 
-heyp has **no accounts or authentication**, so the defaults keep it private:
+heyp has **no accounts or authentication**, so the defaults keep a local copy private:
 
-- **Localhost only.** Compose publishes the port on `127.0.0.1`. To reach heyp from other devices on a network
-  you trust, opt in with `HEYP_BIND=0.0.0.0 docker compose up -d` (or put `HEYP_BIND=0.0.0.0` in `.env`).
-  Anyone who can reach the port can use it.
-- **No cross-site use.** Uploads, processing and deletes sent by another website are refused with 403, so a page
-  you visit can't drive your heyp. Scripts and `curl` (no `Origin` header) work normally. Set
-  `HEYP_ALLOW_CROSS_ORIGIN=1` only if you front heyp with your own origin that rewrites `Host`.
-- **No API docs page** unless you set `HEYP_DOCS=1` (`/docs`, `/redoc`, `/openapi.json`).
-- **No dotfiles** are ever served (`/.DS_Store`, `/.env` → 404), and none are in the image.
-- **Bounded resources.** Each upload is limited in bytes and pixels (checked from the header before decoding),
-  heavy jobs run a few at a time within a memory budget, a request that would take more than about an hour of
-  processing is refused, and a busy server answers 503 with `Retry-After` instead of piling up work. The container
-  has a 4 GB memory limit and a 1 GB RAM-backed `/tmp`.
-- **Hardened container.** Non-root user, read-only root filesystem, `no-new-privileges`, a process limit, a
-  digest-pinned base image, hash-locked Python packages and sha256-pinned models. The page's
-  Content-Security-Policy only allows `'self'`.
+- **Localhost only.** Compose publishes on `127.0.0.1`; opt in to your LAN with `HEYP_BIND=0.0.0.0`.
+- **No cross-site use.** Uploads, jobs and deletes sent by another website get 403.
+- **Bounded resources.** Bytes, pixels and animation frames (frames × pixels) are checked before decoding; jobs run
+  in per-lane queues (`light`, `heavy`, `render`) with memory admission; camera RAW and SVG decoding run in
+  resource-limited, confined child processes (no sockets; Landlock where the kernel has it); a busy server answers
+  503 with `Retry-After`. Hosted mode adds per-client limits (uploads/hour, jobs and captures/minute, active jobs)
+  keyed on a daily-salted hash of the client IP, which is taken from `X-Forwarded-For` only when the request comes
+  from `HEYP_TRUSTED_PROXIES`.
+- **Hardened containers.** Non-root, read-only root filesystems, `cap_drop: ALL`, `no-new-privileges`, process and
+  memory limits, digest-pinned base images, hash-locked Python packages, sha256-pinned models. The renderer reaches
+  the internet only through the egress proxy, which refuses private, reserved and the server's own addresses (and
+  DNS rebinding).
+
+See [SECURITY.md](SECURITY.md) for the full model and how to report a vulnerability.
 
 ## Configuration
 
-Set these in the shell or an `.env` file next to `docker-compose.yml` (compose passes them through), or under
-`environment:` for the less common ones.
+Set these in the shell or an `.env` file next to `docker-compose.yml`. The public deployment uses
+[`deploy/heyp.env.example`](deploy/heyp.env.example), which documents every setting it changes.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `HEYP_BIND` | `127.0.0.1` | Host address compose publishes on; `0.0.0.0` exposes heyp to your network |
-| `HEYP_PORT` | `8080` | Host port compose publishes |
-| `HEYP_MEM_LIMIT` | `4g` | Container memory limit. Raise it together with `HEYP_MAX_PIXELS`, `HEYP_MAX_JOBS` or `HEYP_TMP_SIZE` |
-| `HEYP_TMP_SIZE` | `1g` | RAM-backed `/tmp` for uploads and ZIPs (counts against the memory limit); full → 507 |
-| `HEYP_MAX_UPLOAD_MB` | `100` | Per-file upload limit (413 above it) |
-| `HEYP_MAX_FILES` | `200` | Files per upload request and per export |
-| `HEYP_MAX_PIXELS` | `50000000` | Largest image (decoded or produced) in pixels, 413 above it. Phones make 12–48 MP |
-| `HEYP_TTL_MINUTES` | `60` | Uploads are deleted after this much inactivity |
-| `HEYP_MAX_JOBS` | `2` (compose); app default `max(2, min(4, CPUs))` | Concurrent heavy jobs |
-| `HEYP_JOB_MEMORY_MB` | `0` = 60 % of the memory limit minus the cache | Memory the running jobs may plan to use together |
-| `HEYP_CACHE_MB` | `512` | Memory for decoded images kept between requests |
-| `HEYP_CACHE_ITEMS` | `6` | At most this many decoded images are kept |
-| `HEYP_ALLOW_CROSS_ORIGIN` | `0` | `1` turns off the cross-origin guard |
-| `HEYP_DOCS` | `0` | `1` serves the interactive API docs |
-| `HEYP_TMP_DIR` | `/tmp/heyp` | Upload store, on the tmpfs |
-| `HEYP_MODELS_DIR` | `/opt/heyp/models` | ONNX models; both are baked into the image |
-| `HEYP_PREVIEW_MAX` | `1600` | Largest side of preview images |
+| `HEYP_MODE` | `local` | `hosted` = public site: legal pages, `no-store` caching, hard TTL, abuse limits, no access log |
+| `HEYP_PUBLIC_URL` | — | e.g. `https://heyp.example.com` (required in hosted mode) |
+| `HEYP_SIBLING_URL` | `http://localhost:8081` | heypdf, for the "heyp · heypdf" switch and the `/pdf/*` → heypdf redirects; `off` hides both |
+| `HEYP_BIND` / `HEYP_PORT` | `127.0.0.1` / `8080` | Where compose publishes the app |
+| `HEYP_MEM_LIMIT` / `HEYP_TMP_SIZE` | `4g` / `1g` | Container memory limit and RAM-backed `/tmp` for uploads (counts against it) |
+| `HEYP_MAX_UPLOAD_MB` / `HEYP_MAX_FILES` / `HEYP_MAX_PIXELS` | `100` / `200` / `50000000` | Per-file, per-request and per-image limits |
+| `HEYP_MAX_REQUEST_MB` | auto (257) | Largest upload request; behind a CDN set it under the CDN's body cap (the UI batches to it) |
+| `HEYP_TTL_MINUTES` / `HEYP_HARD_TTL_MINUTES` | `60` / auto (240 hosted, off local) | Delete after inactivity / at most this long after upload |
+| `HEYP_MAX_JOBS`, `HEYP_LANE_LIGHT` / `HEAVY` / `RENDER` | `2`; 2 / 1 / 1 | Concurrency |
+| `HEYP_MAX_ANIM_PIXELS` / `HEYP_MAX_ANIM_FRAMES` | 400 MP / 1000 | Animation (frame-bomb) limits |
+| `HEYP_TRUSTED_PROXIES` | `127.0.0.1/32,::1/128` | Proxies allowed to set the client IP (never `*`). Behind Cloudflare, Apache turns `CF-Connecting-IP` into that IP (`deploy/apache/`, deploy/DEPLOY.md §5) |
+| `HEYP_CDN_PROVIDER` / `HEYP_CDN_DPA_URL` | — | A CDN that terminates HTTPS in front of the server (e.g. Cloudflare): named on `/privacy` and `/terms` |
+| `HEYP_OPERATOR_NAME`, `HEYP_OPERATOR_EMAIL`, `HEYP_JURISDICTION`, `HEYP_EFFECTIVE_DATE`, … | — | Printed on `/privacy` and `/terms` (name + e-mail required in hosted mode) |
+| `HEYP_SOURCE_URL` | `https://github.com/uroy80/heyp` | "Source code" link (AGPL §13) |
+| `HEYP_ALLOW_CROSS_ORIGIN` / `HEYP_DOCS` | `0` / `0` | Turn off the cross-origin guard / serve the OpenAPI docs |
 
-**Memory sizing** (measured): the process with its models takes about 0.45 GB, caches up to about 0.9 GB, and
-each running job about 0.9 GB for a 12 MP background removal up to 2.25 GB at 50 MP (other operations need much
-less). 4 GB fits two 50 MP background removals at once. If heyp goes over its limit only heyp is restarted, which
-wipes uploads. On a smaller host lower `HEYP_MAX_PIXELS` or `HEYP_MAX_JOBS` instead.
-
-Note that compose sets `HEYP_MAX_PIXELS=50000000` and `HEYP_MAX_JOBS=2` explicitly; a plain `docker run` of the
-image uses the app defaults above.
-
-If the models are missing, heyp degrades gracefully. `/api/health` reports `face`/`segmentation: false`,
-passport framing falls back to a centred crop with a warning that says detection is unavailable, and background
-replacement returns 503.
+**Memory sizing** (measured): the process with its models takes about 0.65 GB; each running heavy job up to
+~1.9 GB at 50 MP (background removal and upscaling are the worst). If heyp goes over its limit only heyp restarts,
+which wipes uploads; on a smaller host lower `HEYP_MAX_PIXELS` or the lanes.
 
 ## API
 
-The UI uses the same JSON API, so you can script heyp too. Errors always look like `{"detail": "..."}`:
-
-| Status | Meaning |
-|---|---|
-| 400 | Empty upload |
-| 403 | Cross-origin request (see Security defaults) |
-| 404 | Unknown or expired id, or no such path |
-| 413 | Too large: file, pixels, request body, ZIP, or too much work for one request |
-| 415 | Not an image heyp can read |
-| 422 | Invalid request or op |
-| 499 | You closed the connection during a ZIP/PDF batch |
-| 503 | Busy (retry after `Retry-After` seconds) or a feature is unavailable |
-| 507 | The server's upload storage is full |
+The UI uses the same JSON API. Errors look like `{"detail": "..."}` (400 empty upload · 403 cross-origin ·
+404 unknown/expired · 413 too large · 415 unreadable or not an image · 422 invalid · 429 rate limit · 503
+busy/unavailable with `Retry-After` · 507 upload storage full).
 
 | Method & path | What it does |
 |---|---|
-| `GET /api/health` | Version, features (`heic`, `avif`, `face`, `segmentation`) and `limits` (`max_upload_mb`, `max_files`, `max_pixels`) |
-| `GET /api/formats` | Input and output formats |
-| `GET /api/presets/passport` | Passport presets (official source URLs, `background_edit_allowed`, `crown_includes_hair`) and papers |
-| `POST /api/files` | Upload (multipart field `files`, repeatable) → `{files: [FileInfo], errors: [...]}` |
-| `GET /api/files/{id}` | FileInfo including the full readable EXIF |
-| `GET /api/files/{id}/preview?max=1600` | Oriented sRGB JPEG preview (PNG if the image has transparency) |
-| `GET /api/files/{id}/faces` | Detected faces with landmarks |
-| `DELETE /api/files/{id}` | Delete an upload now (204) |
-| `POST /api/preview` | Run ops + encode one file → size, dimensions, warnings, a small data-URL image, `encode` and `passport` |
-| `POST /api/process` | Run ops + encode → the file; several ids → ZIP (or one PDF) |
-
-A process request is a list of `ops` applied in order, plus `output` options. `ops_by_id` gives some files their
-own op list (it replaces `ops` for those ids), which is how per-photo crops go into one ZIP:
-
-```json
-{
-  "ids": ["<id1>", "<id2>"],
-  "ops": [{"op": "resize", "mode": "long_edge", "size": 1600}],
-  "ops_by_id": {"<id2>": [{"op": "crop_aspect", "ratio": "4:5", "anchor": "face"}]},
-  "output": {"format": "jpeg", "quality": 85, "max_kb": 300, "strip_metadata": true}
-}
-```
-
-The ops are `rotate`, `flip`, `crop`, `crop_aspect`, `trim`, `resize`, `pad`, `adjust`, `background`,
-`passport` (with `level` for head levelling) and `sheet` (its `dpi` defaults to the passport preset's). The
-output options are `format` (`jpeg|png|webp|avif|heic|tiff|bmp|gif|pdf|original`), `quality`, `lossless`,
-`progressive`, `chroma`, `dpi`, `strip_metadata`, `strip_gps`, `colorspace`, `background`, `max_kb`, `min_kb`,
-`combine_pdf` and `filename`. [PLAN.md §3](PLAN.md) has every field and limit.
-
-Examples (run from the folder holding your photo):
+| `GET /api/health` · `GET /api/config` | Version, features and limits · mode, TTLs, features, limits, operator, source URL, heypdf link |
+| `POST /api/files` | Upload images (and HTML pages for the capture tool; multipart `files`, repeatable) → `{files: [FileInfo], errors}` |
+| `GET /api/files/{id}` · `/preview` · `/download` · `/faces` · `DELETE` | FileInfo · preview image · the bytes · detected faces · delete now |
+| `POST /api/preview` · `POST /api/process` | The image pipeline: run ops + encode → preview / file (several ids → ZIP or one PDF) |
+| `GET /api/tools` · `GET /api/tools/{id}` | Every job tool with its options schema, limits and availability |
+| `POST /api/jobs` · `GET /api/jobs/{id}` · `GET /api/jobs/{id}/events` · `DELETE /api/jobs/{id}` | Run a tool on files (202) · status and result files · progress as server-sent events · cancel |
+| `GET /api/detect/{id}` · `GET /api/assets/catalog` | Suggested blur boxes (faces, plates) · the editor's filters, frames, fonts and stickers |
+| `GET /api/presets/passport` · `GET /api/formats` | Passport presets and papers · decoder and encoder lists |
 
 ```bash
-# upload (the response holds the id)
-ID=$(curl -s -F files=@IMG_0001.HEIC http://localhost:8080/api/files | sed -E 's/.*"id":"([0-9a-f]{32})".*/\1/')
-
-# HEIC → JPG (EXIF orientation applied, GPS removed)
+# HEIC → JPG under 200 KB
+ID=$(curl -s -F files=@IMG_0001.HEIC http://localhost:8080/api/files | jq -r '.files[0].id')
 curl -s -X POST http://localhost:8080/api/process -H 'Content-Type: application/json' \
-  -d "{\"ids\":[\"$ID\"],\"output\":{\"format\":\"jpeg\",\"quality\":90}}" -o photo.jpg
+  -d "{\"ids\":[\"$ID\"],\"output\":{\"format\":\"jpeg\",\"max_kb\":200}}" -o photo.jpg
 
-# 4×6 in print at 300 dpi, then compress under 200 KB
-curl -s -X POST http://localhost:8080/api/process -H 'Content-Type: application/json' \
-  -d "{\"ids\":[\"$ID\"],\"ops\":[{\"op\":\"resize\",\"mode\":\"fill\",\"width\":4,\"height\":6,\"unit\":\"in\",\"dpi\":300}],
-       \"output\":{\"format\":\"jpeg\",\"max_kb\":200}}" -o print.jpg
-
-# what would "under 50 KB" do? (size, quality used, warnings; no download)
-curl -s -X POST http://localhost:8080/api/preview -H 'Content-Type: application/json' \
-  -d "{\"ids\":[\"$ID\"],\"output\":{\"format\":\"jpeg\",\"max_kb\":50}}" | sed -E 's/"image":"[^"]*"/"image":"…"/'
-
-# US passport photo on a white background, tiled on a 4×6 in sheet (6 copies)
-curl -s -X POST http://localhost:8080/api/process -H 'Content-Type: application/json' \
-  -d "{\"ids\":[\"$ID\"],\"ops\":[{\"op\":\"passport\",\"preset\":\"us\"},{\"op\":\"sheet\",\"paper\":\"4x6\"}]}" -o sheet.jpg
-
-# delete when done (otherwise it expires after HEYP_TTL_MINUTES)
-curl -s -X DELETE http://localhost:8080/api/files/$ID
+# Remove the background as a job, then download the result
+JOB=$(curl -s -X POST http://localhost:8080/api/jobs -H 'Content-Type: application/json' \
+  -d "{\"tool\":\"img.remove_background\",\"file_ids\":[\"$ID\"],\"options\":{}}" | jq -r .job_id)
+OUT=$(curl -s http://localhost:8080/api/jobs/$JOB | jq -r '.result.files[0].id')   # poll until "status":"done"
+curl -s -o cutout.png http://localhost:8080/api/files/$OUT/download
 ```
 
-Single-file responses carry `X-Heyp-Width`, `X-Heyp-Height` and `X-Heyp-Warnings` (a URL-encoded JSON list,
-e.g. "No face detected — used a centred crop; …"). ZIP and combined-PDF responses carry `X-Heyp-Warnings` too,
-with each entry prefixed by the file name, when any file had a warning.
-
-## Privacy
-
-- **Everything is processed inside the container.** There are no CDNs, analytics or external calls; the web
-  fonts are bundled, and onnxruntime telemetry is disabled.
-- **Uploads stay on the container's tmpfs.** Each one is stored under a random id and deleted when you
-  remove it, when you close the tab, after `HEYP_TTL_MINUTES` of inactivity, and on every restart.
-- **Location and metadata are removed by default.** Exports drop EXIF metadata, GPS included. If you keep
-  metadata, GPS is still removed unless you turn that on too.
-- **Logs record requests, not content.** Logs contain request lines with opaque ids, never file names or
-  image data. Health-check polls are not logged.
+[PLAN.md](PLAN.md) has the architecture, every op, option and limit.
 
 ## Development
 
-Python runs in Docker, so you don't need a local toolchain. The `dev` target has pytest and httpx, and the
-source is bind-mounted. In the dev image `HEYP_REQUIRE_MODELS=1` makes model-dependent tests fail rather than
-skip when a model is missing.
+Python runs in Docker, so you don't need a local toolchain. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
 docker build --target dev -t heyp:dev .
-docker run --rm -v "$PWD":/app -w /app heyp:dev pytest -q                  # full suite (~1,000 tests, ~1 min)
-docker run --rm -v "$PWD":/app -w /app heyp:dev pytest -q tests/test_api.py
-docker run --rm -p 127.0.0.1:8099:8080 -v "$PWD":/app -w /app heyp:dev \
-  uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload                 # live-reload dev server
-node --test static/tests/*.test.mjs                                        # UI unit tests
-for f in static/app.js static/js/*.js static/js/tools/*.js; do node --check "$f"; done
-scripts/smoke.sh                                                           # build + check the runtime image
+docker run --rm --network none -v "$PWD":/app -w /app heyp:dev pytest -q -m "not services"   # ~1,900 tests
+node --test static/tests/*.test.mjs                                                          # UI unit tests
+scripts/smoke.sh                                                                             # build + check the runtime image
+.github/scripts/stack-smoke.sh                                                               # the production stack (after CI-style builds)
 ```
 
-The frontend is plain ES modules with no build step. Edit `static/` and reload. Python dependencies are locked
-with hashes: edit `requirements*.txt`, then run `scripts/lock.sh` (`scripts/lock.sh --base` prints the current
-base-image digest for the `Dockerfile`).
+The frontend is plain ES modules with no build step. Python dependencies are locked with hashes: edit
+`requirements*.txt`, then run `scripts/lock.sh` (`services/lock.sh` for the service images).
+
+**CI/CD** (`.github/workflows/`): every pull request runs ruff, shellcheck, actionlint, zizmor, the Python, UI and
+service tests, builds the three images (`heyp`, `heyp-renderer`, `heyp-egress`), smoke-tests and scans them, starts
+the production stack and checks it from the outside, checks the Apache configuration, and runs CodeQL. Merges to
+`main` publish multi-arch images with signed provenance and SBOM to GHCR and deploy them over SSH to a
+forced-command wrapper that rolls back on failure ([deploy/DEPLOY.md](deploy/DEPLOY.md)).
 
 ## Architecture
 
 ```
-Browser (vanilla HTML/CSS/JS from /static, self-hosted fonts)
-   │  fetch JSON / multipart
+Browser: static/ — vanilla ES modules, bundled fonts, CSP 'self'
+   │ JSON / multipart / server-sent events
    ▼
-FastAPI  app/main.py (security headers, cross-origin guard, body caps, static, lifespan cleanup)
-         app/api.py  (/api routes, job admission: slots + memory budget + bounded queue, work budget)
-   │        app/store.py  TTL'd upload store + decoded-image LRU   app/schemas.py  pydantic ops/output
-   ▼
-app/imaging/pipeline.py   plan → load → ops… → encode
-   ├── io.py        decode/encode every format, orientation, colour management, metadata, PDF
-   ├── ops.py       rotate, flip, crop, crop_aspect, trim, resize, pad, adjust, smart crop
-   ├── compress.py  encode to a target size (quality search, proxy for large images, then downscale)
-   ├── info.py      FileInfo / EXIF summary
-   ├── face.py      YuNet face detection (OpenCV), pupil refinement
-   ├── segment.py   U²-Net person segmentation (onnxruntime) + compositing
-   ├── presets.py   passport presets with official sources and rule flags, print papers
-   └── passport.py  face-aware framing, levelling, background replacement, print sheets
+app (FastAPI, one container)
+   app/main.py, app/routers/     security headers, cross-origin guard, legal pages, jobs, tools, config, /pdf/* redirect
+   app/api.py                    uploads, previews, exports (the image pipeline over HTTP)
+   app/core/                     tool registry, job runner (lanes, queues, SSE), sandbox, abuse limits
+   app/imaging/                  pipeline + op plug-ins (ops_ext/), models (YuNet, U²-Net, BiRefNet, Real-ESRGAN, plates)
+   app/tools/                    job tools: export, Make GIF, compress, upscale, background removal, blur, HTML → image
+   app/legal.py                  /privacy, /terms, /credits from legal/*.md
+   └── /run/renderer/r.sock ─────► renderer: Playwright + Chromium (isolated network) ──► egress: allow-list proxy ──► internet
 ```
+
+## Licence and credits
+
+heyp is free software under the [GNU Affero General Public License v3.0](LICENSE): if you run a modified version for
+others, offer them its source. Fonts, models, stickers and engines keep their own licences — see
+[CREDITS.md](CREDITS.md) (also served at `/credits`), which also says where to get the source of the GPL programs in
+the published images. Security reports: [SECURITY.md](SECURITY.md).
 
 ## Roadmap
 
-[PLAN.md](PLAN.md) is the full spec and design contract (v1.1). Its §11 lists what comes next: watermarks,
-collages, RAW (DNG/CR2/NEF), AI upscaling, a document-scan mode, signature cleanup, a PWA, a CLI wrapper,
-optional basic auth, HDR tone mapping and more passport presets.
+Saved workflows (chains of tools), a PWA and a CLI wrapper, optional basic auth, HDR tone mapping and more passport
+presets — see [PLAN.md](PLAN.md).

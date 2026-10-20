@@ -1,4 +1,4 @@
-"""Encode an image to a target file size (PLAN.md §4 compress).
+"""Encode an image to a target file size (PLAN.md §4 compress), plus file-level optimisers (v2).
 
 Lossy formats search the quality and downscale only when quality 5 is still too large (sized so
 that a mid quality fits, then searched again); lossless formats go optimise → palette (256 → 16
@@ -6,11 +6,20 @@ colours) → downscale. Images above PROXY_ABOVE px search on a ≤ PROXY_PIXELS
 calibrated by the real encodes, predict the full-size result, so only a few encodes ever run at
 full size. Colour conversion, alpha handling and metadata are resolved once (``io._prepare``) and
 reused for every trial encode; MAX_ENCODES bounds the work of one job.
+
+v2 optimisers work on encoded files: :func:`gifsicle` (animated GIF, ``-O3`` + ``--lossy``),
+:func:`pngquant` (palette PNG) and :func:`svg` (scour, ``embed_rasters=False`` only, so it never
+fetches a URL or reads a local file). The GPL tools run as separate programs (no shell, stdin →
+stdout, time and memory limits via ``prlimit``); their stderr never reaches a client.
 """
 from __future__ import annotations
 
 import bisect
 import math
+import os
+import re
+import shutil
+import subprocess
 from dataclasses import dataclass
 from typing import Any
 
@@ -618,3 +627,254 @@ def _refine_scale(enc: _Encoder, ok: _Result, too_big: float, fits: Any) -> _Res
         else:
             too_big = mid
     return ok
+
+
+# ------------------------------------------------------------------ v2: file-level optimisers
+TOOL_TIMEOUT_S = 120
+TOOL_MEM_MB = 1536
+TOOL_MAX_INPUT_BYTES = 200 * 1024 * 1024
+SVG_TIMEOUT_S = 60
+LEVELS = ("low", "recommended", "extreme")
+GIF_LOSSY = {"low": 0, "recommended": 40, "extreme": 120}       # gifsicle --lossy (0 = lossless -O3 only)
+# pngquant --quality=min-max: a floor it can't reach exits 99 (we then optimise losslessly). Photos rarely
+# reach a high floor with 256 colours, so only "low" insists on one.
+PNG_QUALITY = {"low": (50, 95), "recommended": (0, 85), "extreme": (0, 65)}
+_DOCTYPE_RE = re.compile(r"<!DOCTYPE[^\[>]*(\[.*?\])?\s*>\s*", re.DOTALL | re.IGNORECASE)
+
+
+class ToolUnavailable(RuntimeError):
+    """An optional optimiser (gifsicle / pngquant / scour) is not installed."""
+
+
+def tool_available(name: str) -> bool:
+    """True when ``gifsicle``, ``pngquant`` or ``scour`` can be used on this server."""
+    if name == "scour":
+        try:
+            import scour.scour  # noqa: F401
+        except ImportError:
+            return False
+        return True
+    return shutil.which(name) is not None
+
+
+def _limited(cmd: list[str], mem_mb: int, cpu_s: int) -> list[str]:
+    prlimit = shutil.which("prlimit")
+    if prlimit is None:  # macOS dev machines: the wall-clock timeout still applies
+        return cmd
+    return [prlimit, f"--as={mem_mb * 1024 * 1024}", f"--cpu={cpu_s}", "--core=0", "--", *cmd]
+
+
+def _run_tool(cmd: list[str], data: bytes, *, timeout_s: float = TOOL_TIMEOUT_S, mem_mb: int = TOOL_MEM_MB,
+              ok_codes: tuple[int, ...] = (0,)) -> tuple[int, bytes]:
+    """Run an optimiser: bytes on stdin → (exit code, stdout). Never a shell, never stderr to clients."""
+    if len(data) > TOOL_MAX_INPUT_BYTES:
+        raise ValueError(f"File is too large to optimise (max {TOOL_MAX_INPUT_BYTES // (1024 * 1024)} MB)")
+    exe = shutil.which(cmd[0])
+    if exe is None:
+        raise ToolUnavailable(f"{cmd[0]} is not installed on this server")
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"}
+    try:
+        proc = subprocess.run(_limited([exe, *cmd[1:]], mem_mb, int(timeout_s) + 1), input=data,
+                              capture_output=True, timeout=timeout_s, env=env, check=False)
+    except subprocess.TimeoutExpired:
+        raise ValueError(f"Optimising took longer than {timeout_s:.0f} s; try a smaller file") from None
+    if proc.returncode not in ok_codes:
+        raise ValueError(f"Could not optimise this file ({cmd[0]} failed)")
+    return proc.returncode, proc.stdout
+
+
+def gifsicle(data: bytes, *, lossy: int = 0, colors: int | None = None, level: int = 3) -> bytes:
+    """Optimise a (possibly animated) GIF with gifsicle; keeps frames, timing, loop and transparency.
+
+    ``lossy`` (0–200) enables gifsicle's lossy LZW, ``colors`` (2–256) reduces the palette. Comments,
+    frame names and application extensions (e.g. XMP) are dropped. Returns the input when the result
+    is not smaller.
+    """
+    if not data.startswith((b"GIF87a", b"GIF89a")):
+        raise ValueError("Not a GIF file")
+    if isinstance(lossy, bool) or not 0 <= int(lossy) <= 200:
+        raise ValueError("lossy must be between 0 and 200")
+    if colors is not None and not 2 <= int(colors) <= 256:
+        raise ValueError("colors must be between 2 and 256")
+    cmd = ["gifsicle", f"-O{min(3, max(1, int(level)))}", "--no-comments", "--no-names", "--no-extensions",
+           "--no-warnings"]
+    if lossy:
+        cmd.append(f"--lossy={int(lossy)}")
+    if colors:
+        cmd += ["--colors", str(int(colors))]
+    _code, out = _run_tool(cmd, data)
+    if not out.startswith((b"GIF87a", b"GIF89a")):
+        raise ValueError("Could not optimise this GIF")
+    return out if len(out) < len(data) else data
+
+
+def pngquant(data: bytes, *, quality: tuple[int, int] = (60, 85), speed: int = 4) -> bytes | None:
+    """Palette-quantise a PNG with pngquant (alpha kept). None when the quality floor can't be met
+    (pngquant exit 99) or the result is not smaller; metadata is stripped."""
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError("Not a PNG file")
+    lo, hi = (int(v) for v in quality)
+    if not 0 <= lo <= hi <= 100:
+        raise ValueError("quality must be a min-max range within 0–100")
+    if not 1 <= int(speed) <= 11:
+        raise ValueError("speed must be between 1 and 11")
+    code, out = _run_tool(["pngquant", f"--quality={lo}-{hi}", f"--speed={int(speed)}", "--strip", "-"], data,
+                          ok_codes=(0, 98, 99))
+    if code != 0 or not out.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+    return out if len(out) < len(data) else None
+
+
+SVG_PRECISION = {"low": 8, "recommended": 5, "extreme": 3}   # significant digits scour keeps
+JPEG_QUALITY = {"low": 85, "recommended": 75, "extreme": 55}
+WEBP_QUALITY = {"low": 85, "recommended": 75, "extreme": 55}
+OPTIMIZABLE = ("jpeg", "png", "gif", "svg", "webp")
+
+
+def _scour_text(text: str, precision: int = 5) -> str:
+    """scour with rasters never embedded (scour's default fetches http URLs and inlines local files)."""
+    from scour import scour
+
+    options = scour.generateDefaultOptions()
+    options.embed_rasters = False
+    options.strip_comments = True
+    options.remove_metadata = True
+    options.remove_descriptive_elements = False
+    options.enable_viewboxing = False  # keep width/height: the drawing keeps its intrinsic size
+    options.shorten_ids = True
+    options.strip_xml_space_attribute = True
+    options.indent_type = "none"
+    options.newlines = False
+    options.quiet = True
+    options.digits = int(precision)
+    options.cdigits = -1
+    if options.embed_rasters:  # pragma: no cover — defensive: never run with URL fetching on
+        raise RuntimeError("scour raster embedding must stay off")
+    return scour.scourString(text, options)
+
+
+def svg(data: bytes, level: str = "recommended") -> bytes:
+    """Optimise an SVG with scour (``embed_rasters=False``: it never fetches a URL or reads a file).
+
+    The document is first parsed and stripped of active content (scripts, event handlers, foreign
+    objects, ``javascript:`` URLs — the result may be opened from our origin); entities are expanded
+    and the DOCTYPE dropped. ``level`` sets the coordinate precision. Callers compare sizes.
+    """
+    if level not in LEVELS:
+        raise ValueError(f"level must be one of {', '.join(LEVELS)}")
+    if len(data) > io.SVG_MAX_BYTES:
+        raise ValueError(f"SVG is larger than {io.SVG_MAX_BYTES // (1024 * 1024)} MB")
+    if not tool_available("scour"):
+        raise ToolUnavailable("SVG optimisation (scour) is not installed on this server")
+    head = data[:io._HEAD_BYTES]  # noqa: SLF001 — same sniffing as uploads
+    if head[:2] == b"\x1f\x8b":
+        raise ValueError("Compressed SVG (.svgz) can't be optimised; upload the plain .svg")
+    if io.sniff(head) != "svg":
+        raise ValueError("Not an SVG file")
+    try:  # well-formedness, entity-bomb, size and active-content checks before scour's own (minidom) parse
+        clean = io.sanitize_svg(data, keep_links=True)
+    except io.ImageError as exc:
+        raise ValueError(str(exc)) from None
+    try:
+        out = io._isolated(_scour_text, clean, SVG_PRECISION[level], timeout_s=SVG_TIMEOUT_S,  # noqa: SLF001
+                           mem_mb=2048)
+    except (MemoryError, TimeoutError):
+        raise ValueError("This SVG is too complex to optimise") from None
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("Could not optimise this SVG") from exc
+    return _DOCTYPE_RE.sub("", out, count=1).encode("utf-8")
+
+
+@dataclass
+class Optimized:
+    data: bytes
+    format: str          # canonical format of ``data`` (same as the input)
+    changed: bool        # False: the input was already as small as we can make it (``data`` is the input)
+    note: str = ""
+
+
+def _is_apng(data: bytes) -> bool:
+    return data.startswith(b"\x89PNG\r\n\x1a\n") and b"acTL" in data[:4096] and data.find(b"acTL") < data.find(b"IDAT")
+
+
+def optimize_file(data: bytes, fmt: str, level: str = "recommended", *, png_quantize: bool = True) -> Optimized:
+    """Compress an image file in its own format (iLoveIMG "Compress IMAGE"): JPEG and WebP are
+    re-encoded at the level's quality, PNG is palette-quantised by pngquant (or optimised losslessly),
+    GIF goes through gifsicle (animations kept) and SVG through scour. The input comes back unchanged
+    when the result would not be smaller."""
+    if level not in LEVELS:
+        raise ValueError(f"level must be one of {', '.join(LEVELS)}")
+    fmt = io.canonical_format(fmt)
+    if fmt not in OPTIMIZABLE:
+        raise ValueError(f"{fmt.upper()} files can't be compressed here; compress works on JPG, PNG, GIF, SVG and WebP")
+    if len(data) > TOOL_MAX_INPUT_BYTES:
+        raise ValueError(f"File is too large to optimise (max {TOOL_MAX_INPUT_BYTES // (1024 * 1024)} MB)")
+    note = ""
+    if fmt == "svg":
+        out = svg(data, level)
+    elif fmt == "gif":
+        try:
+            out = gifsicle(data, lossy=GIF_LOSSY[level], colors=128 if level == "extreme" else None)
+        except ToolUnavailable:
+            out, note = _pillow_gif(data), "gifsicle is not installed; used a basic GIF optimisation"
+    elif fmt == "png":
+        if _is_apng(data):
+            out, note = _reencode_animation(data, "png", level), ""
+        else:
+            out = None
+            if png_quantize:
+                try:
+                    out = pngquant(data, quality=PNG_QUALITY[level])
+                except ToolUnavailable:
+                    note = "pngquant is not installed; the PNG was optimised losslessly"
+            if out is None:
+                out = _lossless_png(data)
+    elif fmt == "webp":
+        out = _reencode_animation(data, "webp", level) if _is_animated(data) else _reencode(data, "webp", WEBP_QUALITY[level])
+    else:
+        out = _reencode(data, "jpeg", JPEG_QUALITY[level])
+    if out is None or len(out) >= len(data):
+        return Optimized(data, fmt, False, note or "This file is already well optimised")
+    return Optimized(out, fmt, True, note)
+
+
+def _is_animated(data: bytes) -> bool:
+    from . import animated
+
+    return animated.is_animated(data)
+
+
+def _reencode(data: bytes, fmt: str, quality: int) -> bytes:
+    """Re-encode a still image in ``fmt`` (EXIF orientation applied, metadata stripped, ICC → sRGB)."""
+    loaded = io.load(data)
+    return io.save(loaded.image, fmt, quality=quality, progressive=True, chroma="auto", dpi=loaded.dpi,
+                   exif=loaded.exif, icc_profile=loaded.icc_profile, strip_metadata=True)
+
+
+def _reencode_animation(data: bytes, fmt: str, level: str) -> bytes | None:
+    from . import animated
+
+    anim = animated.load(data)
+    if anim is None:
+        return _reencode(data, fmt, WEBP_QUALITY[level]) if fmt == "webp" else _lossless_png(data)
+    return animated.encode(anim.frames, anim.durations, anim.loop, fmt, quality=WEBP_QUALITY[level],
+                           lossless=fmt == "png")
+
+
+def _lossless_png(data: bytes) -> bytes | None:
+    loaded = io.load(data)
+    if loaded.bit_depth > 8:  # Pillow would write 8 bits: not lossless
+        return None
+    return io.save(loaded.image, "png", dpi=loaded.dpi, icc_profile=loaded.icc_profile, colorspace="keep",
+                   strip_metadata=True)
+
+
+def _pillow_gif(data: bytes) -> bytes:
+    from . import animated
+
+    anim = animated.load(data)
+    if anim is None:
+        return io.save(io.load(data).image, "gif")
+    return animated.encode(anim.frames, anim.durations, anim.loop, "gif", optimize=False)

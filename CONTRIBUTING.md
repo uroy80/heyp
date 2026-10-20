@@ -1,0 +1,56 @@
+# Contributing
+
+Thanks for helping! heyp is an image toolbox: a FastAPI backend, the editorial "Broadsheet" UI (plain ES modules,
+no build step) and the Docker setup, all in this repository. Its PDF sibling, heypdf, lives in its own repository
+(github.com/uroy80/heypdf); the two share no code.
+
+## Ground rules
+
+- **Privacy first.** Files are processed on the server, deleted after their TTL and never logged. New features must
+  work without third-party services.
+- **The legal pages are part of the code.** `/privacy` and `/terms` are rendered from `legal/*.md` and must stay
+  literally true. If your change alters what is stored, logged, sent or kept — a new browser-storage key, a new
+  service, a new log field — change `legal/privacy.md` in the same pull request. `tests/test_legal.py` checks
+  what it can (storage keys, cookies, the Apache log format, the CDN disclosure).
+- **Licence.** The project is AGPL-3.0-or-later. New dependencies must be compatible (MIT, BSD, Apache-2.0, LGPL,
+  MPL, GPL/AGPL), get pinned with hashes (`scripts/lock.sh`, or `services/lock.sh` for the service images) and a
+  line in `CREDITS.md`. No fonts, models, stickers or templates without a licence that allows redistribution.
+- **The contract.** `PLAN.md` describes the architecture, the API and the module boundaries. If your change
+  disagrees with it, update both deliberately.
+
+## Development
+
+You need Docker (and Node 24 for the UI tests) — no local Python.
+
+```bash
+docker build --target dev -t heyp:dev .                                       # test image (models included)
+docker run --rm --network none -v "$PWD":/app -w /app heyp:dev pytest -q -m "not services"   # Python tests
+node --test static/tests/*.test.mjs                                           # UI unit tests
+.github/scripts/service-tests.sh renderer                                     # a service image's own tests
+scripts/smoke.sh                                                              # runtime image end-to-end
+docker compose up -d --build                                                  # http://localhost:8080
+docker compose --profile render up -d --build                                 # + HTML → image
+.github/scripts/validate-deploy.sh                                            # deploy/ (compose, apachectl -t)
+```
+
+Lint uses ruff (`ruff.toml`; CI runs `ruff check`):
+
+```bash
+docker run --rm -v "$PWD":/src -w /src ghcr.io/astral-sh/ruff:0.17.1 check .
+```
+
+`ruff format` is not enforced yet; it will be adopted in one formatting-only commit.
+
+## Pull requests
+
+- One topic per PR; describe what and why, and how you tested it (the template has a checklist).
+- CI must be green ("CI OK"): lint, Python/UI/service tests, three image builds with smoke tests and a vulnerability
+  gate, the full-stack compose test, CodeQL.
+- Add a label (`feature`, `tool`, `bug`, `security`, `ci`, `deploy`) so the release notes sort it.
+- Changes under `.github/`, `deploy/`, `legal/`, the Dockerfiles and the locks need the code owner's review.
+- GitHub Actions: pin every action to a full commit SHA with the version in a comment, and give each job only the
+  permissions it needs (zizmor checks this).
+
+## Security issues
+
+Please don't open public issues for vulnerabilities — see [SECURITY.md](SECURITY.md).

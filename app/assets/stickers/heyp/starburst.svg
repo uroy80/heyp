@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 220" width="220" height="220">
+  <polygon fill="#f2c230" stroke="#1d1b19" stroke-width="5" stroke-linejoin="round"
+    points="110,8 128,44 166,26 166,66 206,72 182,104 212,132 172,144 182,184 142,176 128,214 110,184 92,214 78,176 38,184 48,144 8,132 38,104 14,72 54,66 54,26 92,44"/>
+  <text x="110" y="132" text-anchor="middle" font-family="Anton" font-size="56" fill="#1d1b19">NEW</text>
+</svg>

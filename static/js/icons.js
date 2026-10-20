@@ -35,6 +35,28 @@ const PATHS = {
   trim: '<path d="M7.5 3.5v3M3.5 7.5h3M16.5 20.5v-3M20.5 16.5h-3"/><rect x="7.5" y="7.5" width="9" height="9" rx="1"/><path d="M3.5 3.5l2.5 2.5M20.5 20.5 18 18"/>',
   reset: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3L4.5 9"/><path d="M4.5 4.5V9H9"/>',
   chevron: '<path d="m6.5 9.5 5.5 5.5 5.5-5.5"/>',
+  // v2 sections and editor tools
+  upscale: '<rect x="3.5" y="11.5" width="9" height="9" rx="1"/><path d="M12.5 3.5h8v8"/><path d="m20.5 3.5-7 7"/><path d="M3.5 7.5v-4h4"/>',
+  watermark: '<path d="M12 3.5c3.6 4.2 6 7.4 6 10.3a6 6 0 0 1-12 0c0-2.9 2.4-6.1 6-10.3Z"/><path d="M9.5 14.5a2.6 2.6 0 0 0 2.5 2.5"/>',
+  blur: '<rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path d="M7.5 8h.01M12 8h.01M16.5 8h.01M7.5 12h.01M12 12h.01M16.5 12h.01M7.5 16h.01M12 16h.01M16.5 16h.01" stroke-width="2.6"/>',
+  meme: '<rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path d="M7 7.5h10"/><path d="M7 16.5h10"/><path d="M12 7.5v1.5M12 15v1.5"/>',
+  editor: '<path d="M4 20c1.5-.2 3-1 3.6-2.6l.6-1.4 2-2-2.2-2.2-2 2-1.4.6C3 15 3.6 18.5 4 20Z"/><path d="m10.2 14 9.3-9.3a1.6 1.6 0 0 0-2.2-2.2L8 11.8"/>',
+  gif: '<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M7.5 5.5v13M16.5 5.5v13M3.5 9h4M3.5 15h4M16.5 9h4M16.5 15h4"/>',
+  globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17"/><path d="M12 3.5c2.4 2.6 3.5 5.4 3.5 8.5s-1.1 5.9-3.5 8.5c-2.4-2.6-3.5-5.4-3.5-8.5s1.1-5.9 3.5-8.5Z"/>',
+  text: '<path d="M5 6.5V5h14v1.5"/><path d="M12 5v14"/><path d="M9.5 19h5"/>',
+  sticker: '<path d="M20.5 12.5a8 8 0 1 1-9-9h1a8 8 0 0 1 8 8Z"/><path d="M20.5 12.5c-4.4 0-8 3.6-8 8"/><path d="M8.5 10h.01M14.5 10h.01"/><path d="M8.5 14.5c.8.8 1.8 1.2 3 1.2"/>',
+  shape: '<rect x="3.5" y="10.5" width="10" height="10" rx="1"/><circle cx="15.5" cy="8.5" r="5"/>',
+  brush: '<path d="M4 20c1.5-.2 3-1 3.6-2.6l.6-1.4 2-2-2.2-2.2-2 2-1.4.6C3 15 3.6 18.5 4 20Z"/><path d="m10.2 14 9.3-9.3a1.6 1.6 0 0 0-2.2-2.2L8 11.8"/>',
+  filter: '<circle cx="9" cy="9" r="5.5"/><circle cx="15" cy="9" r="5.5"/><circle cx="12" cy="15" r="5.5"/>',
+  frame: '<rect x="3.5" y="3.5" width="17" height="17" rx="1"/><rect x="7.5" y="7.5" width="9" height="9"/>',
+  arrowUp: '<path d="M12 19V5"/><path d="m6 11 6-6 6 6"/>',
+  arrowDown: '<path d="M12 5v14"/><path d="m6 13 6 6 6-6"/>',
+  play: '<path d="M7.5 5.5v13l11-6.5Z"/>',
+  pause: '<path d="M8 5.5v13M16 5.5v13"/>',
+  trash: '<path d="M4.5 7h15"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/>',
+  layers: '<path d="M12 3.5 3.5 8 12 12.5 20.5 8 12 3.5Z"/><path d="m3.5 12 8.5 4.5 8.5-4.5"/>',
+  target: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/>',
+  doc: '<path d="M6.5 2.5h7l5 5v14h-12Z"/><path d="M13.5 2.5v5h5"/><path d="M9 13h6M9 16.5h6"/>',
 };
 
 const NS = 'http://www.w3.org/2000/svg';

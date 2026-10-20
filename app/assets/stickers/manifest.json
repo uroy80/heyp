@@ -1,0 +1,1650 @@
+{
+ "version": 1,
+ "openmoji_version": "17.0.0",
+ "stickers": [
+  {
+   "id": "heyp/smiley",
+   "name": "heyp smiley",
+   "category": "heyp",
+   "source": "heyp",
+   "file": "heyp/smiley.svg"
+  },
+  {
+   "id": "heyp/extra",
+   "name": "Extra!",
+   "category": "heyp",
+   "source": "heyp",
+   "file": "heyp/extra.svg"
+  },
+  {
+   "id": "heyp/breaking",
+   "name": "Breaking",
+   "category": "heyp",
+   "source": "heyp",
+   "file": "heyp/breaking.svg"
+  },
+  {
+   "id": "heyp/approved",
+   "name": "Approved stamp",
+   "category": "heyp",
+   "source": "heyp",
+   "file": "heyp/approved.svg"
+  },
+  {
+   "id": "heyp/speech-bubble",
+   "name": "Speech bubble",
+   "category": "heyp",
+   "source": "heyp",
+   "file": "heyp/speech-bubble.svg"
+  },
+  {
+   "id": "heyp/thought-bubble",
+   "name": "Thought bubble",
+   "category": "heyp",
+   "source": "heyp",
+   "file": "heyp/thought-bubble.svg"
+  },
+  {
+   "id": "heyp/arrow",
+   "name": "Hand-drawn arrow",
+   "category": "heyp",
+   "source": "heyp",
+   "file": "heyp/arrow.svg"
+  },
+  {
+   "id": "heyp/circle-mark",
+   "name": "Circled",
+   "category": "heyp",
+   "source": "heyp",
+   "file": "heyp/circle-mark.svg"
+  },
+  {
+   "id": "heyp/starburst",
+   "name": "New starburst",
+   "category": "heyp",
+   "source": "heyp",
+   "file": "heyp/starburst.svg"
+  },
+  {
+   "id": "heyp/quote",
+   "name": "Quotation marks",
+   "category": "heyp",
+   "source": "heyp",
+   "file": "heyp/quote.svg"
+  },
+  {
+   "id": "heyp/heart-scribble",
+   "name": "Heart",
+   "category": "heyp",
+   "source": "heyp",
+   "file": "heyp/heart-scribble.svg"
+  },
+  {
+   "id": "heyp/crown-doodle",
+   "name": "Crown doodle",
+   "category": "heyp",
+   "source": "heyp",
+   "file": "heyp/crown-doodle.svg"
+  },
+  {
+   "id": "openmoji/grinning-face",
+   "name": "grinning face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/grinning-face.svg",
+   "emoji": "😀",
+   "hexcode": "1F600",
+   "author": "Emily Jäger"
+  },
+  {
+   "id": "openmoji/grinning-face-with-big-eyes",
+   "name": "grinning face with big eyes",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/grinning-face-with-big-eyes.svg",
+   "emoji": "😃",
+   "hexcode": "1F603",
+   "author": "Emily Jäger"
+  },
+  {
+   "id": "openmoji/face-with-tears-of-joy",
+   "name": "face with tears of joy",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/face-with-tears-of-joy.svg",
+   "emoji": "😂",
+   "hexcode": "1F602",
+   "author": "Emily Jäger"
+  },
+  {
+   "id": "openmoji/rolling-on-the-floor-laughing",
+   "name": "rolling on the floor laughing",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/rolling-on-the-floor-laughing.svg",
+   "emoji": "🤣",
+   "hexcode": "1F923",
+   "author": "Emily Jäger"
+  },
+  {
+   "id": "openmoji/smiling-face-with-smiling-eyes",
+   "name": "smiling face with smiling eyes",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/smiling-face-with-smiling-eyes.svg",
+   "emoji": "😊",
+   "hexcode": "1F60A",
+   "author": "Emily Jäger"
+  },
+  {
+   "id": "openmoji/smiling-face-with-heart-eyes",
+   "name": "smiling face with heart-eyes",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/smiling-face-with-heart-eyes.svg",
+   "emoji": "😍",
+   "hexcode": "1F60D",
+   "author": "Emily Jäger"
+  },
+  {
+   "id": "openmoji/smiling-face-with-hearts",
+   "name": "smiling face with hearts",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/smiling-face-with-hearts.svg",
+   "emoji": "🥰",
+   "hexcode": "1F970",
+   "author": "Antonia Wagner"
+  },
+  {
+   "id": "openmoji/face-blowing-a-kiss",
+   "name": "face blowing a kiss",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/face-blowing-a-kiss.svg",
+   "emoji": "😘",
+   "hexcode": "1F618",
+   "author": "Emily Jäger"
+  },
+  {
+   "id": "openmoji/winking-face",
+   "name": "winking face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/winking-face.svg",
+   "emoji": "😉",
+   "hexcode": "1F609",
+   "author": "Emily Jäger"
+  },
+  {
+   "id": "openmoji/zany-face",
+   "name": "zany face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/zany-face.svg",
+   "emoji": "🤪",
+   "hexcode": "1F92A",
+   "author": "Mariella Steeb"
+  },
+  {
+   "id": "openmoji/smiling-face-with-sunglasses",
+   "name": "smiling face with sunglasses",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/smiling-face-with-sunglasses.svg",
+   "emoji": "😎",
+   "hexcode": "1F60E",
+   "author": "Emily Jäger"
+  },
+  {
+   "id": "openmoji/star-struck",
+   "name": "star-struck",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/star-struck.svg",
+   "emoji": "🤩",
+   "hexcode": "1F929",
+   "author": "Emily Jäger"
+  },
+  {
+   "id": "openmoji/partying-face",
+   "name": "partying face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/partying-face.svg",
+   "emoji": "🥳",
+   "hexcode": "1F973",
+   "author": "Antonia Wagner"
+  },
+  {
+   "id": "openmoji/thinking-face",
+   "name": "thinking face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/thinking-face.svg",
+   "emoji": "🤔",
+   "hexcode": "1F914",
+   "author": "Emily Jäger"
+  },
+  {
+   "id": "openmoji/face-with-monocle",
+   "name": "face with monocle",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/face-with-monocle.svg",
+   "emoji": "🧐",
+   "hexcode": "1F9D0",
+   "author": "Emily Jäger"
+  },
+  {
+   "id": "openmoji/neutral-face",
+   "name": "neutral face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/neutral-face.svg",
+   "emoji": "😐️",
+   "hexcode": "1F610",
+   "author": "Mariella Steeb"
+  },
+  {
+   "id": "openmoji/face-with-rolling-eyes",
+   "name": "face with rolling eyes",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/face-with-rolling-eyes.svg",
+   "emoji": "🙄",
+   "hexcode": "1F644",
+   "author": "Emily Jäger"
+  },
+  {
+   "id": "openmoji/smirking-face",
+   "name": "smirking face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/smirking-face.svg",
+   "emoji": "😏",
+   "hexcode": "1F60F",
+   "author": "Mariella Steeb"
+  },
+  {
+   "id": "openmoji/pensive-face",
+   "name": "pensive face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/pensive-face.svg",
+   "emoji": "😔",
+   "hexcode": "1F614",
+   "author": "Mariella Steeb"
+  },
+  {
+   "id": "openmoji/loudly-crying-face",
+   "name": "loudly crying face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/loudly-crying-face.svg",
+   "emoji": "😭",
+   "hexcode": "1F62D",
+   "author": "Carlin MacKenzie"
+  },
+  {
+   "id": "openmoji/enraged-face",
+   "name": "enraged face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/enraged-face.svg",
+   "emoji": "😡",
+   "hexcode": "1F621",
+   "author": "Mariella Steeb"
+  },
+  {
+   "id": "openmoji/exploding-head",
+   "name": "exploding head",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/exploding-head.svg",
+   "emoji": "🤯",
+   "hexcode": "1F92F",
+   "author": "Tara Lynn Connelly"
+  },
+  {
+   "id": "openmoji/flushed-face",
+   "name": "flushed face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/flushed-face.svg",
+   "emoji": "😳",
+   "hexcode": "1F633",
+   "author": "Mariella Steeb"
+  },
+  {
+   "id": "openmoji/face-screaming-in-fear",
+   "name": "face screaming in fear",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/face-screaming-in-fear.svg",
+   "emoji": "😱",
+   "hexcode": "1F631",
+   "author": "Mariella Steeb"
+  },
+  {
+   "id": "openmoji/sleeping-face",
+   "name": "sleeping face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/sleeping-face.svg",
+   "emoji": "😴",
+   "hexcode": "1F634",
+   "author": "Emily Jäger"
+  },
+  {
+   "id": "openmoji/nerd-face",
+   "name": "nerd face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/nerd-face.svg",
+   "emoji": "🤓",
+   "hexcode": "1F913",
+   "author": "Emily Jäger"
+  },
+  {
+   "id": "openmoji/upside-down-face",
+   "name": "upside-down face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/upside-down-face.svg",
+   "emoji": "🙃",
+   "hexcode": "1F643",
+   "author": "Emily Jäger"
+  },
+  {
+   "id": "openmoji/melting-face",
+   "name": "melting face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/melting-face.svg",
+   "emoji": "🫠",
+   "hexcode": "1FAE0",
+   "author": "Liz Bravo"
+  },
+  {
+   "id": "openmoji/skull",
+   "name": "skull",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/skull.svg",
+   "emoji": "💀",
+   "hexcode": "1F480",
+   "author": "Mariella Steeb"
+  },
+  {
+   "id": "openmoji/ghost",
+   "name": "ghost",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/ghost.svg",
+   "emoji": "👻",
+   "hexcode": "1F47B",
+   "author": "Mariella Steeb"
+  },
+  {
+   "id": "openmoji/alien",
+   "name": "alien",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/alien.svg",
+   "emoji": "👽️",
+   "hexcode": "1F47D",
+   "author": "Mariella Steeb"
+  },
+  {
+   "id": "openmoji/robot",
+   "name": "robot",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/robot.svg",
+   "emoji": "🤖",
+   "hexcode": "1F916",
+   "author": "Mariella Steeb"
+  },
+  {
+   "id": "openmoji/pile-of-poo",
+   "name": "pile of poo",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/pile-of-poo.svg",
+   "emoji": "💩",
+   "hexcode": "1F4A9",
+   "author": "Mariella Steeb"
+  },
+  {
+   "id": "openmoji/clown-face",
+   "name": "clown face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/clown-face.svg",
+   "emoji": "🤡",
+   "hexcode": "1F921",
+   "author": "Emily Jäger"
+  },
+  {
+   "id": "openmoji/hot-face",
+   "name": "hot face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/hot-face.svg",
+   "emoji": "🥵",
+   "hexcode": "1F975",
+   "author": "Antonia Wagner"
+  },
+  {
+   "id": "openmoji/cold-face",
+   "name": "cold face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/cold-face.svg",
+   "emoji": "🥶",
+   "hexcode": "1F976",
+   "author": "Antonia Wagner"
+  },
+  {
+   "id": "openmoji/shushing-face",
+   "name": "shushing face",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/shushing-face.svg",
+   "emoji": "🤫",
+   "hexcode": "1F92B",
+   "author": "Emily Jäger"
+  },
+  {
+   "id": "openmoji/face-with-open-mouth",
+   "name": "face with open mouth",
+   "category": "faces",
+   "source": "openmoji",
+   "file": "openmoji/face-with-open-mouth.svg",
+   "emoji": "😮",
+   "hexcode": "1F62E",
+   "author": "Mariella Steeb"
+  },
+  {
+   "id": "openmoji/red-heart",
+   "name": "red heart",
+   "category": "hearts",
+   "source": "openmoji",
+   "file": "openmoji/red-heart.svg",
+   "emoji": "❤️",
+   "hexcode": "2764",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/orange-heart",
+   "name": "orange heart",
+   "category": "hearts",
+   "source": "openmoji",
+   "file": "openmoji/orange-heart.svg",
+   "emoji": "🧡",
+   "hexcode": "1F9E1",
+   "author": "Laura Schießer"
+  },
+  {
+   "id": "openmoji/yellow-heart",
+   "name": "yellow heart",
+   "category": "hearts",
+   "source": "openmoji",
+   "file": "openmoji/yellow-heart.svg",
+   "emoji": "💛",
+   "hexcode": "1F49B",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/green-heart",
+   "name": "green heart",
+   "category": "hearts",
+   "source": "openmoji",
+   "file": "openmoji/green-heart.svg",
+   "emoji": "💚",
+   "hexcode": "1F49A",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/blue-heart",
+   "name": "blue heart",
+   "category": "hearts",
+   "source": "openmoji",
+   "file": "openmoji/blue-heart.svg",
+   "emoji": "💙",
+   "hexcode": "1F499",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/purple-heart",
+   "name": "purple heart",
+   "category": "hearts",
+   "source": "openmoji",
+   "file": "openmoji/purple-heart.svg",
+   "emoji": "💜",
+   "hexcode": "1F49C",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/black-heart",
+   "name": "black heart",
+   "category": "hearts",
+   "source": "openmoji",
+   "file": "openmoji/black-heart.svg",
+   "emoji": "🖤",
+   "hexcode": "1F5A4",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/broken-heart",
+   "name": "broken heart",
+   "category": "hearts",
+   "source": "openmoji",
+   "file": "openmoji/broken-heart.svg",
+   "emoji": "💔",
+   "hexcode": "1F494",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/sparkling-heart",
+   "name": "sparkling heart",
+   "category": "hearts",
+   "source": "openmoji",
+   "file": "openmoji/sparkling-heart.svg",
+   "emoji": "💖",
+   "hexcode": "1F496",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/two-hearts",
+   "name": "two hearts",
+   "category": "hearts",
+   "source": "openmoji",
+   "file": "openmoji/two-hearts.svg",
+   "emoji": "💕",
+   "hexcode": "1F495",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/heart-with-arrow",
+   "name": "heart with arrow",
+   "category": "hearts",
+   "source": "openmoji",
+   "file": "openmoji/heart-with-arrow.svg",
+   "emoji": "💘",
+   "hexcode": "1F498",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/hundred-points",
+   "name": "hundred points",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/hundred-points.svg",
+   "emoji": "💯",
+   "hexcode": "1F4AF",
+   "author": "Jose Avila"
+  },
+  {
+   "id": "openmoji/collision",
+   "name": "collision",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/collision.svg",
+   "emoji": "💥",
+   "hexcode": "1F4A5",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/sparkles",
+   "name": "sparkles",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/sparkles.svg",
+   "emoji": "✨️",
+   "hexcode": "2728",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/fire",
+   "name": "fire",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/fire.svg",
+   "emoji": "🔥",
+   "hexcode": "1F525",
+   "author": "Guemil Project"
+  },
+  {
+   "id": "openmoji/star",
+   "name": "star",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/star.svg",
+   "emoji": "⭐️",
+   "hexcode": "2B50",
+   "author": "Vanessa Boutzikoudi"
+  },
+  {
+   "id": "openmoji/glowing-star",
+   "name": "glowing star",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/glowing-star.svg",
+   "emoji": "🌟",
+   "hexcode": "1F31F",
+   "author": "Vanessa Boutzikoudi"
+  },
+  {
+   "id": "openmoji/check-mark-button",
+   "name": "check mark button",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/check-mark-button.svg",
+   "emoji": "✅️",
+   "hexcode": "2705",
+   "author": "Hilda Kalyoncu"
+  },
+  {
+   "id": "openmoji/cross-mark",
+   "name": "cross mark",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/cross-mark.svg",
+   "emoji": "❌️",
+   "hexcode": "274C",
+   "author": "Hilda Kalyoncu"
+  },
+  {
+   "id": "openmoji/red-question-mark",
+   "name": "red question mark",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/red-question-mark.svg",
+   "emoji": "❓️",
+   "hexcode": "2753",
+   "author": "Selina Lange"
+  },
+  {
+   "id": "openmoji/red-exclamation-mark",
+   "name": "red exclamation mark",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/red-exclamation-mark.svg",
+   "emoji": "❗️",
+   "hexcode": "2757",
+   "author": "Hilda Kalyoncu"
+  },
+  {
+   "id": "openmoji/speech-balloon",
+   "name": "speech balloon",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/speech-balloon.svg",
+   "emoji": "💬",
+   "hexcode": "1F4AC",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/thought-balloon",
+   "name": "thought balloon",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/thought-balloon.svg",
+   "emoji": "💭",
+   "hexcode": "1F4AD",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/right-anger-bubble",
+   "name": "right anger bubble",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/right-anger-bubble.svg",
+   "emoji": "🗯️",
+   "hexcode": "1F5EF",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/zzz",
+   "name": "ZZZ",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/zzz.svg",
+   "emoji": "💤",
+   "hexcode": "1F4A4",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/dizzy",
+   "name": "dizzy",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/dizzy.svg",
+   "emoji": "💫",
+   "hexcode": "1F4AB",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/high-voltage",
+   "name": "high voltage",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/high-voltage.svg",
+   "emoji": "⚡️",
+   "hexcode": "26A1",
+   "author": "Vanessa Boutzikoudi"
+  },
+  {
+   "id": "openmoji/warning",
+   "name": "warning",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/warning.svg",
+   "emoji": "⚠️",
+   "hexcode": "26A0",
+   "author": "Miriam Vollmeier"
+  },
+  {
+   "id": "openmoji/no-entry",
+   "name": "no entry",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/no-entry.svg",
+   "emoji": "⛔️",
+   "hexcode": "26D4",
+   "author": "Miriam Vollmeier"
+  },
+  {
+   "id": "openmoji/new-button",
+   "name": "NEW button",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/new-button.svg",
+   "emoji": "🆕",
+   "hexcode": "1F195",
+   "author": "Crystal Moon"
+  },
+  {
+   "id": "openmoji/free-button",
+   "name": "FREE button",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/free-button.svg",
+   "emoji": "🆓",
+   "hexcode": "1F193",
+   "author": "Crystal Moon"
+  },
+  {
+   "id": "openmoji/cool-button",
+   "name": "COOL button",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/cool-button.svg",
+   "emoji": "🆒",
+   "hexcode": "1F192",
+   "author": "Crystal Moon"
+  },
+  {
+   "id": "openmoji/sos-button",
+   "name": "SOS button",
+   "category": "symbols",
+   "source": "openmoji",
+   "file": "openmoji/sos-button.svg",
+   "emoji": "🆘",
+   "hexcode": "1F198",
+   "author": "Crystal Moon"
+  },
+  {
+   "id": "openmoji/thumbs-up",
+   "name": "thumbs up",
+   "category": "hands",
+   "source": "openmoji",
+   "file": "openmoji/thumbs-up.svg",
+   "emoji": "👍️",
+   "hexcode": "1F44D",
+   "author": "Julian Grüneberg"
+  },
+  {
+   "id": "openmoji/thumbs-down",
+   "name": "thumbs down",
+   "category": "hands",
+   "source": "openmoji",
+   "file": "openmoji/thumbs-down.svg",
+   "emoji": "👎️",
+   "hexcode": "1F44E",
+   "author": "Julian Grüneberg"
+  },
+  {
+   "id": "openmoji/clapping-hands",
+   "name": "clapping hands",
+   "category": "hands",
+   "source": "openmoji",
+   "file": "openmoji/clapping-hands.svg",
+   "emoji": "👏",
+   "hexcode": "1F44F",
+   "author": "Julian Grüneberg"
+  },
+  {
+   "id": "openmoji/waving-hand",
+   "name": "waving hand",
+   "category": "hands",
+   "source": "openmoji",
+   "file": "openmoji/waving-hand.svg",
+   "emoji": "👋",
+   "hexcode": "1F44B",
+   "author": "Julian Grüneberg"
+  },
+  {
+   "id": "openmoji/ok-hand",
+   "name": "OK hand",
+   "category": "hands",
+   "source": "openmoji",
+   "file": "openmoji/ok-hand.svg",
+   "emoji": "👌",
+   "hexcode": "1F44C",
+   "author": "Julian Grüneberg"
+  },
+  {
+   "id": "openmoji/victory-hand",
+   "name": "victory hand",
+   "category": "hands",
+   "source": "openmoji",
+   "file": "openmoji/victory-hand.svg",
+   "emoji": "✌️",
+   "hexcode": "270C",
+   "author": "Julian Grüneberg"
+  },
+  {
+   "id": "openmoji/folded-hands",
+   "name": "folded hands",
+   "category": "hands",
+   "source": "openmoji",
+   "file": "openmoji/folded-hands.svg",
+   "emoji": "🙏",
+   "hexcode": "1F64F",
+   "author": "Julian Grüneberg"
+  },
+  {
+   "id": "openmoji/raising-hands",
+   "name": "raising hands",
+   "category": "hands",
+   "source": "openmoji",
+   "file": "openmoji/raising-hands.svg",
+   "emoji": "🙌",
+   "hexcode": "1F64C",
+   "author": "Julian Grüneberg"
+  },
+  {
+   "id": "openmoji/flexed-biceps",
+   "name": "flexed biceps",
+   "category": "hands",
+   "source": "openmoji",
+   "file": "openmoji/flexed-biceps.svg",
+   "emoji": "💪",
+   "hexcode": "1F4AA",
+   "author": "Julian Grüneberg"
+  },
+  {
+   "id": "openmoji/backhand-index-pointing-right",
+   "name": "backhand index pointing right",
+   "category": "hands",
+   "source": "openmoji",
+   "file": "openmoji/backhand-index-pointing-right.svg",
+   "emoji": "👉️",
+   "hexcode": "1F449",
+   "author": "Julian Grüneberg"
+  },
+  {
+   "id": "openmoji/crossed-fingers",
+   "name": "crossed fingers",
+   "category": "hands",
+   "source": "openmoji",
+   "file": "openmoji/crossed-fingers.svg",
+   "emoji": "🤞",
+   "hexcode": "1F91E",
+   "author": "Julian Grüneberg"
+  },
+  {
+   "id": "openmoji/love-you-gesture",
+   "name": "love-you gesture",
+   "category": "hands",
+   "source": "openmoji",
+   "file": "openmoji/love-you-gesture.svg",
+   "emoji": "🤟",
+   "hexcode": "1F91F",
+   "author": "Julian Grüneberg"
+  },
+  {
+   "id": "openmoji/dog-face",
+   "name": "dog face",
+   "category": "animals",
+   "source": "openmoji",
+   "file": "openmoji/dog-face.svg",
+   "emoji": "🐶",
+   "hexcode": "1F436",
+   "author": "Sofie Ascherl"
+  },
+  {
+   "id": "openmoji/cat-face",
+   "name": "cat face",
+   "category": "animals",
+   "source": "openmoji",
+   "file": "openmoji/cat-face.svg",
+   "emoji": "🐱",
+   "hexcode": "1F431",
+   "author": "Sofie Ascherl"
+  },
+  {
+   "id": "openmoji/fox",
+   "name": "fox",
+   "category": "animals",
+   "source": "openmoji",
+   "file": "openmoji/fox.svg",
+   "emoji": "🦊",
+   "hexcode": "1F98A",
+   "author": "Sofie Ascherl"
+  },
+  {
+   "id": "openmoji/panda",
+   "name": "panda",
+   "category": "animals",
+   "source": "openmoji",
+   "file": "openmoji/panda.svg",
+   "emoji": "🐼",
+   "hexcode": "1F43C",
+   "author": "Sofie Ascherl"
+  },
+  {
+   "id": "openmoji/unicorn",
+   "name": "unicorn",
+   "category": "animals",
+   "source": "openmoji",
+   "file": "openmoji/unicorn.svg",
+   "emoji": "🦄",
+   "hexcode": "1F984",
+   "author": "Sofie Ascherl"
+  },
+  {
+   "id": "openmoji/lion",
+   "name": "lion",
+   "category": "animals",
+   "source": "openmoji",
+   "file": "openmoji/lion.svg",
+   "emoji": "🦁",
+   "hexcode": "1F981",
+   "author": "Sofie Ascherl"
+  },
+  {
+   "id": "openmoji/see-no-evil-monkey",
+   "name": "see-no-evil monkey",
+   "category": "animals",
+   "source": "openmoji",
+   "file": "openmoji/see-no-evil-monkey.svg",
+   "emoji": "🙈",
+   "hexcode": "1F648",
+   "author": "Mariella Steeb"
+  },
+  {
+   "id": "openmoji/frog",
+   "name": "frog",
+   "category": "animals",
+   "source": "openmoji",
+   "file": "openmoji/frog.svg",
+   "emoji": "🐸",
+   "hexcode": "1F438",
+   "author": "Selina Bauder"
+  },
+  {
+   "id": "openmoji/penguin",
+   "name": "penguin",
+   "category": "animals",
+   "source": "openmoji",
+   "file": "openmoji/penguin.svg",
+   "emoji": "🐧",
+   "hexcode": "1F427",
+   "author": "Selina Bauder"
+  },
+  {
+   "id": "openmoji/owl",
+   "name": "owl",
+   "category": "animals",
+   "source": "openmoji",
+   "file": "openmoji/owl.svg",
+   "emoji": "🦉",
+   "hexcode": "1F989",
+   "author": "Selina Bauder"
+  },
+  {
+   "id": "openmoji/butterfly",
+   "name": "butterfly",
+   "category": "animals",
+   "source": "openmoji",
+   "file": "openmoji/butterfly.svg",
+   "emoji": "🦋",
+   "hexcode": "1F98B",
+   "author": "Robert Winslow"
+  },
+  {
+   "id": "openmoji/honeybee",
+   "name": "honeybee",
+   "category": "animals",
+   "source": "openmoji",
+   "file": "openmoji/honeybee.svg",
+   "emoji": "🐝",
+   "hexcode": "1F41D",
+   "author": "Selina Bauder"
+  },
+  {
+   "id": "openmoji/turtle",
+   "name": "turtle",
+   "category": "animals",
+   "source": "openmoji",
+   "file": "openmoji/turtle.svg",
+   "emoji": "🐢",
+   "hexcode": "1F422",
+   "author": "Robert Winslow"
+  },
+  {
+   "id": "openmoji/octopus",
+   "name": "octopus",
+   "category": "animals",
+   "source": "openmoji",
+   "file": "openmoji/octopus.svg",
+   "emoji": "🐙",
+   "hexcode": "1F419",
+   "author": "Selina Bauder"
+  },
+  {
+   "id": "openmoji/t-rex",
+   "name": "T-Rex",
+   "category": "animals",
+   "source": "openmoji",
+   "file": "openmoji/t-rex.svg",
+   "emoji": "🦖",
+   "hexcode": "1F996",
+   "author": "Selina Bauder"
+  },
+  {
+   "id": "openmoji/pizza",
+   "name": "pizza",
+   "category": "food",
+   "source": "openmoji",
+   "file": "openmoji/pizza.svg",
+   "emoji": "🍕",
+   "hexcode": "1F355",
+   "author": "Miriam Vollmeier"
+  },
+  {
+   "id": "openmoji/hamburger",
+   "name": "hamburger",
+   "category": "food",
+   "source": "openmoji",
+   "file": "openmoji/hamburger.svg",
+   "emoji": "🍔",
+   "hexcode": "1F354",
+   "author": "Miriam Vollmeier"
+  },
+  {
+   "id": "openmoji/french-fries",
+   "name": "french fries",
+   "category": "food",
+   "source": "openmoji",
+   "file": "openmoji/french-fries.svg",
+   "emoji": "🍟",
+   "hexcode": "1F35F",
+   "author": "Miriam Vollmeier"
+  },
+  {
+   "id": "openmoji/taco",
+   "name": "taco",
+   "category": "food",
+   "source": "openmoji",
+   "file": "openmoji/taco.svg",
+   "emoji": "🌮",
+   "hexcode": "1F32E",
+   "author": "Miriam Vollmeier"
+  },
+  {
+   "id": "openmoji/doughnut",
+   "name": "doughnut",
+   "category": "food",
+   "source": "openmoji",
+   "file": "openmoji/doughnut.svg",
+   "emoji": "🍩",
+   "hexcode": "1F369",
+   "author": "Miriam Vollmeier"
+  },
+  {
+   "id": "openmoji/birthday-cake",
+   "name": "birthday cake",
+   "category": "food",
+   "source": "openmoji",
+   "file": "openmoji/birthday-cake.svg",
+   "emoji": "🎂",
+   "hexcode": "1F382",
+   "author": "Miriam Vollmeier"
+  },
+  {
+   "id": "openmoji/soft-ice-cream",
+   "name": "soft ice cream",
+   "category": "food",
+   "source": "openmoji",
+   "file": "openmoji/soft-ice-cream.svg",
+   "emoji": "🍦",
+   "hexcode": "1F366",
+   "author": "Miriam Vollmeier"
+  },
+  {
+   "id": "openmoji/hot-beverage",
+   "name": "hot beverage",
+   "category": "food",
+   "source": "openmoji",
+   "file": "openmoji/hot-beverage.svg",
+   "emoji": "☕️",
+   "hexcode": "2615",
+   "author": "Alexander Müller"
+  },
+  {
+   "id": "openmoji/tropical-drink",
+   "name": "tropical drink",
+   "category": "food",
+   "source": "openmoji",
+   "file": "openmoji/tropical-drink.svg",
+   "emoji": "🍹",
+   "hexcode": "1F379",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/clinking-beer-mugs",
+   "name": "clinking beer mugs",
+   "category": "food",
+   "source": "openmoji",
+   "file": "openmoji/clinking-beer-mugs.svg",
+   "emoji": "🍻",
+   "hexcode": "1F37B",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/watermelon",
+   "name": "watermelon",
+   "category": "food",
+   "source": "openmoji",
+   "file": "openmoji/watermelon.svg",
+   "emoji": "🍉",
+   "hexcode": "1F349",
+   "author": "Marius Schnabel"
+  },
+  {
+   "id": "openmoji/avocado",
+   "name": "avocado",
+   "category": "food",
+   "source": "openmoji",
+   "file": "openmoji/avocado.svg",
+   "emoji": "🥑",
+   "hexcode": "1F951",
+   "author": "Marius Schnabel"
+  },
+  {
+   "id": "openmoji/party-popper",
+   "name": "party popper",
+   "category": "celebration",
+   "source": "openmoji",
+   "file": "openmoji/party-popper.svg",
+   "emoji": "🎉",
+   "hexcode": "1F389",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/confetti-ball",
+   "name": "confetti ball",
+   "category": "celebration",
+   "source": "openmoji",
+   "file": "openmoji/confetti-ball.svg",
+   "emoji": "🎊",
+   "hexcode": "1F38A",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/balloon",
+   "name": "balloon",
+   "category": "celebration",
+   "source": "openmoji",
+   "file": "openmoji/balloon.svg",
+   "emoji": "🎈",
+   "hexcode": "1F388",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/wrapped-gift",
+   "name": "wrapped gift",
+   "category": "celebration",
+   "source": "openmoji",
+   "file": "openmoji/wrapped-gift.svg",
+   "emoji": "🎁",
+   "hexcode": "1F381",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/trophy",
+   "name": "trophy",
+   "category": "celebration",
+   "source": "openmoji",
+   "file": "openmoji/trophy.svg",
+   "emoji": "🏆️",
+   "hexcode": "1F3C6",
+   "author": "Julian Grüneberg"
+  },
+  {
+   "id": "openmoji/1st-place-medal",
+   "name": "1st place medal",
+   "category": "celebration",
+   "source": "openmoji",
+   "file": "openmoji/1st-place-medal.svg",
+   "emoji": "🥇",
+   "hexcode": "1F947",
+   "author": "Julian Grüneberg"
+  },
+  {
+   "id": "openmoji/crown",
+   "name": "crown",
+   "category": "celebration",
+   "source": "openmoji",
+   "file": "openmoji/crown.svg",
+   "emoji": "👑",
+   "hexcode": "1F451",
+   "author": "Jonas Roßner"
+  },
+  {
+   "id": "openmoji/gem-stone",
+   "name": "gem stone",
+   "category": "celebration",
+   "source": "openmoji",
+   "file": "openmoji/gem-stone.svg",
+   "emoji": "💎",
+   "hexcode": "1F48E",
+   "author": "Jonas Roßner"
+  },
+  {
+   "id": "openmoji/fireworks",
+   "name": "fireworks",
+   "category": "celebration",
+   "source": "openmoji",
+   "file": "openmoji/fireworks.svg",
+   "emoji": "🎆",
+   "hexcode": "1F386",
+   "author": "Jonas Dunkel"
+  },
+  {
+   "id": "openmoji/christmas-tree",
+   "name": "Christmas tree",
+   "category": "celebration",
+   "source": "openmoji",
+   "file": "openmoji/christmas-tree.svg",
+   "emoji": "🎄",
+   "hexcode": "1F384",
+   "author": "Liz Bravo"
+  },
+  {
+   "id": "openmoji/jack-o-lantern",
+   "name": "jack-o-lantern",
+   "category": "celebration",
+   "source": "openmoji",
+   "file": "openmoji/jack-o-lantern.svg",
+   "emoji": "🎃",
+   "hexcode": "1F383",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/ribbon",
+   "name": "ribbon",
+   "category": "celebration",
+   "source": "openmoji",
+   "file": "openmoji/ribbon.svg",
+   "emoji": "🎀",
+   "hexcode": "1F380",
+   "author": "Laura Humpfer"
+  },
+  {
+   "id": "openmoji/sun",
+   "name": "sun",
+   "category": "nature",
+   "source": "openmoji",
+   "file": "openmoji/sun.svg",
+   "emoji": "☀️",
+   "hexcode": "2600",
+   "author": "Vanessa Boutzikoudi"
+  },
+  {
+   "id": "openmoji/rainbow",
+   "name": "rainbow",
+   "category": "nature",
+   "source": "openmoji",
+   "file": "openmoji/rainbow.svg",
+   "emoji": "🌈",
+   "hexcode": "1F308",
+   "author": "Vanessa Boutzikoudi"
+  },
+  {
+   "id": "openmoji/cloud-with-rain",
+   "name": "cloud with rain",
+   "category": "nature",
+   "source": "openmoji",
+   "file": "openmoji/cloud-with-rain.svg",
+   "emoji": "🌧️",
+   "hexcode": "1F327",
+   "author": "Vanessa Boutzikoudi"
+  },
+  {
+   "id": "openmoji/snowflake",
+   "name": "snowflake",
+   "category": "nature",
+   "source": "openmoji",
+   "file": "openmoji/snowflake.svg",
+   "emoji": "❄️",
+   "hexcode": "2744",
+   "author": "Vanessa Boutzikoudi"
+  },
+  {
+   "id": "openmoji/crescent-moon",
+   "name": "crescent moon",
+   "category": "nature",
+   "source": "openmoji",
+   "file": "openmoji/crescent-moon.svg",
+   "emoji": "🌙",
+   "hexcode": "1F319",
+   "author": "Vanessa Boutzikoudi"
+  },
+  {
+   "id": "openmoji/cherry-blossom",
+   "name": "cherry blossom",
+   "category": "nature",
+   "source": "openmoji",
+   "file": "openmoji/cherry-blossom.svg",
+   "emoji": "🌸",
+   "hexcode": "1F338",
+   "author": "Hilda Kalyoncu"
+  },
+  {
+   "id": "openmoji/sunflower",
+   "name": "sunflower",
+   "category": "nature",
+   "source": "openmoji",
+   "file": "openmoji/sunflower.svg",
+   "emoji": "🌻",
+   "hexcode": "1F33B",
+   "author": "Hilda Kalyoncu"
+  },
+  {
+   "id": "openmoji/four-leaf-clover",
+   "name": "four leaf clover",
+   "category": "nature",
+   "source": "openmoji",
+   "file": "openmoji/four-leaf-clover.svg",
+   "emoji": "🍀",
+   "hexcode": "1F340",
+   "author": "Hilda Kalyoncu"
+  },
+  {
+   "id": "openmoji/rose",
+   "name": "rose",
+   "category": "nature",
+   "source": "openmoji",
+   "file": "openmoji/rose.svg",
+   "emoji": "🌹",
+   "hexcode": "1F339",
+   "author": "Hilda Kalyoncu"
+  },
+  {
+   "id": "openmoji/cactus",
+   "name": "cactus",
+   "category": "nature",
+   "source": "openmoji",
+   "file": "openmoji/cactus.svg",
+   "emoji": "🌵",
+   "hexcode": "1F335",
+   "author": "Liz Bravo"
+  },
+  {
+   "id": "openmoji/globe-showing-europe-africa",
+   "name": "globe showing Europe-Africa",
+   "category": "nature",
+   "source": "openmoji",
+   "file": "openmoji/globe-showing-europe-africa.svg",
+   "emoji": "🌍️",
+   "hexcode": "1F30D",
+   "author": "Martin Wehl"
+  },
+  {
+   "id": "openmoji/rocket",
+   "name": "rocket",
+   "category": "nature",
+   "source": "openmoji",
+   "file": "openmoji/rocket.svg",
+   "emoji": "🚀",
+   "hexcode": "1F680",
+   "author": "Kris Kowal"
+  },
+  {
+   "id": "openmoji/camera-with-flash",
+   "name": "camera with flash",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/camera-with-flash.svg",
+   "emoji": "📸",
+   "hexcode": "1F4F8",
+   "author": "Sina Schulz"
+  },
+  {
+   "id": "openmoji/mobile-phone",
+   "name": "mobile phone",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/mobile-phone.svg",
+   "emoji": "📱",
+   "hexcode": "1F4F1",
+   "author": "Martin Wehl"
+  },
+  {
+   "id": "openmoji/laptop",
+   "name": "laptop",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/laptop.svg",
+   "emoji": "💻️",
+   "hexcode": "1F4BB",
+   "author": "Jonas Roßner"
+  },
+  {
+   "id": "openmoji/light-bulb",
+   "name": "light bulb",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/light-bulb.svg",
+   "emoji": "💡",
+   "hexcode": "1F4A1",
+   "author": "Sina Schulz"
+  },
+  {
+   "id": "openmoji/money-bag",
+   "name": "money bag",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/money-bag.svg",
+   "emoji": "💰️",
+   "hexcode": "1F4B0",
+   "author": "Marius Schnabel"
+  },
+  {
+   "id": "openmoji/megaphone",
+   "name": "megaphone",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/megaphone.svg",
+   "emoji": "📣",
+   "hexcode": "1F4E3",
+   "author": "Abby Esquivel"
+  },
+  {
+   "id": "openmoji/bell",
+   "name": "bell",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/bell.svg",
+   "emoji": "🔔",
+   "hexcode": "1F514",
+   "author": "Rana Cakir"
+  },
+  {
+   "id": "openmoji/locked",
+   "name": "locked",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/locked.svg",
+   "emoji": "🔒️",
+   "hexcode": "1F512",
+   "author": "Lisa Schulz"
+  },
+  {
+   "id": "openmoji/key",
+   "name": "key",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/key.svg",
+   "emoji": "🔑",
+   "hexcode": "1F511",
+   "author": "Lisa Schulz"
+  },
+  {
+   "id": "openmoji/hourglass-done",
+   "name": "hourglass done",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/hourglass-done.svg",
+   "emoji": "⌛️",
+   "hexcode": "231B",
+   "author": "Rana Cakir"
+  },
+  {
+   "id": "openmoji/alarm-clock",
+   "name": "alarm clock",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/alarm-clock.svg",
+   "emoji": "⏰️",
+   "hexcode": "23F0",
+   "author": "Rana Cakir"
+  },
+  {
+   "id": "openmoji/newspaper",
+   "name": "newspaper",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/newspaper.svg",
+   "emoji": "📰",
+   "hexcode": "1F4F0",
+   "author": "Jonas Roßner"
+  },
+  {
+   "id": "openmoji/rolled-up-newspaper",
+   "name": "rolled-up newspaper",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/rolled-up-newspaper.svg",
+   "emoji": "🗞️",
+   "hexcode": "1F5DE",
+   "author": "Tonia Reinhardt"
+  },
+  {
+   "id": "openmoji/pencil",
+   "name": "pencil",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/pencil.svg",
+   "emoji": "✏️",
+   "hexcode": "270F",
+   "author": "Rana Cakir"
+  },
+  {
+   "id": "openmoji/books",
+   "name": "books",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/books.svg",
+   "emoji": "📚️",
+   "hexcode": "1F4DA",
+   "author": "Liz Bravo"
+  },
+  {
+   "id": "openmoji/magnifying-glass-tilted-left",
+   "name": "magnifying glass tilted left",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/magnifying-glass-tilted-left.svg",
+   "emoji": "🔍️",
+   "hexcode": "1F50D",
+   "author": "Sina Schulz"
+  },
+  {
+   "id": "openmoji/round-pushpin",
+   "name": "round pushpin",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/round-pushpin.svg",
+   "emoji": "📍",
+   "hexcode": "1F4CD",
+   "author": "Sina Schulz"
+  },
+  {
+   "id": "openmoji/airplane",
+   "name": "airplane",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/airplane.svg",
+   "emoji": "✈️",
+   "hexcode": "2708",
+   "author": "Ronja Bäurlen"
+  },
+  {
+   "id": "openmoji/automobile",
+   "name": "automobile",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/automobile.svg",
+   "emoji": "🚗",
+   "hexcode": "1F697",
+   "author": "Ronja Bäurlen"
+  },
+  {
+   "id": "openmoji/house",
+   "name": "house",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/house.svg",
+   "emoji": "🏠️",
+   "hexcode": "1F3E0",
+   "author": "Martin Wehl"
+  },
+  {
+   "id": "openmoji/musical-notes",
+   "name": "musical notes",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/musical-notes.svg",
+   "emoji": "🎶",
+   "hexcode": "1F3B6",
+   "author": "Sina Schulz"
+  },
+  {
+   "id": "openmoji/sunglasses",
+   "name": "sunglasses",
+   "category": "objects",
+   "source": "openmoji",
+   "file": "openmoji/sunglasses.svg",
+   "emoji": "🕶️",
+   "hexcode": "1F576",
+   "author": "Jonas Roßner"
+  }
+ ]
+}

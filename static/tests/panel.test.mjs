@@ -46,6 +46,13 @@ test('C3: presets that forbid background edits default "Replace background" off 
   assert.equal(p.replace, true);
 });
 
+test('a new document starts from its own framing: the fine-tune made for the previous one is dropped', () => {
+  state.presets = PRESETS;
+  const p = { ...defaults.passport(), preset: 'us', zoom: 1.2, offsetX: 0.1, offsetY: 0.07 };
+  choosePreset(p, 'uk');
+  assert.deepEqual({ zoom: p.zoom, offsetX: p.offsetX, offsetY: p.offsetY }, { zoom: 1, offsetX: 0, offsetY: 0 });
+});
+
 const PP = {
   preset: 'us', width: 600, height: 600, head_ratio: 0.594, eye_from_bottom: 0.62, face_found: true,
   lines: { crown: 52, chin: 408.4, eye: 228 },

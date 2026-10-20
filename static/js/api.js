@@ -1,7 +1,9 @@
 // HTTP client for the heyp API (PLAN.md §3). All errors surface as ApiError {status, detail}.
 
+import { OFFLINE } from './config.js';
+
 export class ApiError extends Error {
-  constructor(status, detail, body = null, retryAfter = null) {
+  constructor(status, detail, body = null, retryAfter = null, useJob = null) {
     super(detail);
     this.name = 'ApiError';
     this.status = status;
@@ -9,7 +11,20 @@ export class ApiError extends Error {
     this.body = body;
     /** Seconds the server asked us to wait before retrying (503 busy), else null. */
     this.retryAfter = retryAfter;
+    /** The server wants this request run as a job (X-Heyp-Use-Job: the tool id), else null. */
+    this.useJob = useJob;
   }
+}
+
+/**
+ * A readable line for an answer that isn't the API's JSON — a reverse proxy or CDN (Cloudflare, Apache, nginx)
+ * replied instead of heyp: too large a request, or the server took longer than the proxy waits. Null otherwise.
+ */
+export function edgeMessage(status) {
+  if (status === 413) return 'This upload is larger than the site accepts in one request. Try fewer or smaller files.';
+  if (status === 502 || status === 504 || (status >= 520 && status <= 524)) return 'The server took too long to answer. Try fewer photos or a smaller size, or try again in a moment.';
+  if (status === 503) return 'The server is busy. Try again in a moment.';
+  return null;
 }
 
 const BUSY_WAIT_S = 5;
@@ -35,8 +50,6 @@ export async function imageRetryDelay(url) {
   }
 }
 
-const OFFLINE = 'Can’t reach heyp. Is the container still running?';
-
 /** Turn FastAPI's `detail` (string, or a 422 list of {loc,msg}) into one readable line. */
 export function formatDetail(detail, fallback = 'Something went wrong') {
   if (typeof detail === 'string' && detail) return detail;
@@ -59,9 +72,10 @@ async function errorFrom(res) {
   } catch {
     /* not JSON */
   }
-  const fallback = res.status === 404 ? 'File not found — it may have expired' : `${res.status} ${res.statusText || 'error'}`;
+  const fallback = res.status === 404 ? 'File not found — it may have expired' : edgeMessage(res.status) || `${res.status} ${res.statusText || 'error'}`;
   const retry = res.status === 503 ? retryAfterSeconds(res.headers.get('Retry-After')) : null;
-  return new ApiError(res.status, formatDetail(body?.detail, fallback), body, retry);
+  const useJob = /^[a-z]+\.[a-z0-9_]+$/.test(res.headers.get('X-Heyp-Use-Job') || '') ? res.headers.get('X-Heyp-Use-Job') : null;
+  return new ApiError(res.status, formatDetail(body?.detail, fallback), body, retry, useJob);
 }
 
 async function request(method, url, { json, signal } = {}) {
@@ -120,6 +134,16 @@ function parseWarnings(header) {
 
 export const api = {
   health: () => getJSON('/api/health'),
+  /** v2: deployment facts that drive the page copy (mode, TTLs, operator, source URL); 404 on older servers. */
+  config: () => getJSON('/api/config'),
+  /** v2: the job-tool registry (options schema, limits, availability). */
+  tools: () => getJSON('/api/tools'),
+  /** v2: filters, frames, fonts, shapes and stickers the photo editor offers. */
+  editorCatalog: () => getJSON('/api/assets/catalog'),
+  /** v2: suggested blur boxes ({regions: [{kind, x, y, w, h, shape, score, selected}], width, height}). */
+  detect: (id, what, signal) => getJSON(`/api/detect/${encodeURIComponent(id)}?what=${encodeURIComponent(what.join(','))}`, { signal }),
+  /** v2: bytes of a stored file (job results). */
+  downloadUrl: (id) => `/api/files/${encodeURIComponent(id)}/download`,
   formats: () => getJSON('/api/formats'),
   presets: () => getJSON('/api/presets/passport'),
   fileInfo: (id, opts) => getJSON(`/api/files/${encodeURIComponent(id)}`, opts),
@@ -152,14 +176,16 @@ export const api = {
 
   /**
    * Multipart upload with progress (XHR — fetch has no upload progress).
+   * `accept` ("image", "image,html") makes the server refuse other kinds with a reason (the photo strip takes
+   * images only; the HTML → image tool sends nothing and takes an HTML page).
    * Resolves {files, errors}; rejects ApiError (body may still carry `errors`).
    */
-  upload(files, onProgress) {
+  upload(files, onProgress, { accept = '' } = {}) {
     return new Promise((resolve, reject) => {
       const fd = new FormData();
       for (const f of files) fd.append('files', f, f.name || 'pasted-image.png');
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/api/files');
+      xhr.open('POST', accept ? `/api/files?accept=${encodeURIComponent(accept)}` : '/api/files');
       xhr.setRequestHeader('Accept', 'application/json');
       xhr.upload.addEventListener('progress', (e) => {
         if (e.lengthComputable) onProgress?.(e.loaded / e.total);
@@ -175,7 +201,8 @@ export const api = {
         if (xhr.status >= 200 && xhr.status < 300 && body) {
           resolve({ files: body.files || [], errors: body.errors || [] });
         } else {
-          const fallback = xhr.status === 413 ? 'File too large' : `Upload failed (${xhr.status || 'network'})`;
+          const fallback = (xhr.status === 413 && !body ? edgeMessage(413) : null) || (xhr.status === 413 ? 'File too large' : null)
+            || (body ? null : edgeMessage(xhr.status)) || `Upload failed (${xhr.status || 'network'})`;
           reject(new ApiError(xhr.status, formatDetail(body?.detail, fallback), body));
         }
       });

@@ -254,3 +254,22 @@ def test_passport_level_and_sheet_dpi_fields():
     assert PassportOp.model_validate({"op": "passport", "preset": "us", "level": False}).level is False
     assert SheetOp.model_validate({"op": "sheet", "dpi": None}).dpi is None
     assert SheetOp.model_validate({"op": "sheet", "dpi": 400}).dpi == 400
+
+
+# ------------------------------------------------------------------ v2: the union comes from the op registry
+def test_op_union_is_built_from_the_registry():
+    from app import schemas
+    from app.imaging import opreg
+
+    registered = {spec.name for spec in opreg.all_ops()}
+    assert set(schemas.OP_NAMES) == registered | {schemas._op_name(m) for m in schemas.V1_OPS}
+    assert schemas.OP_NAMES[:11] == ("rotate", "flip", "crop", "crop_aspect", "trim", "resize", "pad", "adjust",
+                                     "background", "passport", "sheet")
+    # app.schemas names follow a plug-in that replaced a v1 model (e.g. rotate's batch filter)
+    assert schemas.RotateOp is opreg.get_op("rotate").model
+
+
+def test_v1_op_json_is_unchanged_by_plugins():
+    ops = OPS_ADAPTER.validate_python([{"op": "rotate", "angle": 90}, {"op": "background", "mode": "replace"}])
+    dumped = [op.model_dump(exclude_defaults=True) for op in ops]
+    assert dumped == [{"op": "rotate", "angle": 90.0}, {"op": "background", "mode": "replace"}]

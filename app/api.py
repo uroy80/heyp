@@ -1,4 +1,4 @@
-"""HTTP API under ``/api`` (PLAN.md §3).
+"""The image API under ``/api`` (PLAN.md §3): uploads, previews, exports, presets and file access.
 
 Endpoints are plain ``def`` so Starlette runs them in its threadpool; CPU-heavy sections are
 additionally admitted by ``app.state.jobs`` (:class:`JobSlots`: HEYP_MAX_JOBS at once, their planned
@@ -6,6 +6,7 @@ memory within a budget, and a bounded wait queue so queued requests can't starve
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
 import errno
@@ -32,6 +33,9 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from PIL import Image, UnidentifiedImageError
 
 from app.config import VERSION, Settings
+from app.core import files as kinds
+from app.core.errors import RateLimited
+from app.core.limits import client_info
 from app.imaging import info as imginfo, io, pipeline, presets
 from app.schemas import INPUT_FORMATS, OUTPUT_FORMATS, ProcessRequest
 from app.store import FileStore, StoredFile, StoreError, clean_name
@@ -54,7 +58,11 @@ PREVIEW_BUCKETS = (240, 480, 960, 1600)  # thumbnail sides cached on disk (the U
 DISPLAY_DECODE_MAX_PIXELS = 12_000_000   # larger outputs are re-decoded at reduced size for /preview
 # Header probes only use the decoders io.load accepts (no exotic parsers on untrusted uploads).
 PROBE_FORMATS = ("JPEG", "MPO", "PNG", "WEBP", "AVIF", "HEIF", "TIFF", "BMP", "DIB", "GIF", "ICO", "JPEG2000")
-_UPLOAD_STATUS_PRIORITY = (507, 503, 413, 415, 400)
+_UPLOAD_STATUS_PRIORITY = (507, 503, 429, 413, 415, 422, 400)
+# Inputs beyond the encoder list (the extension is only a hint, bytes decide): layered, vector and camera RAW
+# images, and HTML pages for the HTML → image tool.
+IMAGE_INPUTS_EXTRA = ["psd", "psb", "svg", "svgz", *sorted(kinds.RAW_EXTS)]
+HTML_INPUTS = ["html", "htm"]
 _NO_SPACE = {errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)}
 
 PreviewMax = Annotated[int | None, Query(alias="max", ge=16, le=16384, description="max side in px")]
@@ -285,29 +293,60 @@ def content_disposition(filename: str) -> str:
 
 # ------------------------------------------------------------------ static info
 # Cheap endpoints are async so they never queue for a threadpool slot behind heavy jobs.
+def model_features() -> dict[str, bool]:
+    """Optional image models without loading any of them; all False when unavailable."""
+    try:
+        from app.tools import img_ai
+
+        found = img_ai.features()
+    except Exception:  # module missing or broken → nothing optional is on
+        found = {}
+    return {key: bool(found.get(key, False)) for key in ("upscale", "matting", "plates")}
+
+
+def engine_features() -> dict[str, bool]:
+    """Renderer (HTML → image) availability as the tool registry sees it (a cached health check)."""
+    from app.core import registry
+
+    return {"renderer": registry.engine_status("renderer")[0]}
+
+
 @router.get("/health")
 async def health(request: Request) -> dict:
+    """Liveness plus what this server can do. Async (never queues behind jobs); the renderer health
+    check, which touches its socket, runs in a worker thread outside the request threadpool."""
+    from app.routers.config import upscale_max_input_pixels
+
     settings = _settings(request)
+    engines = await asyncio.to_thread(engine_features)
     return {
         "status": "ok",
         "version": VERSION,
+        "revision": settings.revision or None,
         "features": {
             "heic": bool(io.FEATURES.get("heic", False)),
             "avif": bool(io.FEATURES.get("avif", False)),
             "face": _feature("face"),
             "segmentation": _feature("segment"),
+            **model_features(),
+            **engines,
         },
         "limits": {
             "max_upload_mb": settings.max_upload_mb,
             "max_files": settings.max_files,
             "max_pixels": min(settings.max_pixels, io.max_pixels()),
+            "upscale_max_input_pixels": upscale_max_input_pixels(),
+            **({"max_request_mb": settings.max_request_mb} if settings.max_request_mb else {}),
         },
     }
 
 
 @router.get("/formats")
 async def formats() -> dict:
-    return {"input": list(INPUT_FORMATS), "output": list(OUTPUT_FORMATS)}
+    """``input``/``output``: the decoder and encoder lists; ``images`` adds layered, vector and RAW inputs and
+    ``html`` the pages the HTML → image tool captures."""
+    return {"input": list(INPUT_FORMATS), "output": list(OUTPUT_FORMATS), "images": IMAGE_INPUTS_EXTRA,
+            "html": HTML_INPUTS}
 
 
 @router.get("/presets/passport")
@@ -316,15 +355,51 @@ async def passport_presets() -> dict:
 
 
 # ------------------------------------------------------------------ files
+def kind_fields(stored: StoredFile) -> dict[str, Any]:
+    """The FileInfo fields every file carries (kind, origin, deletion deadline), images included."""
+    info = stored.info()
+    return {key: info[key] for key in ("kind", "source", "parent_ids", "tool", "expires_at")}
+
+
+def image_file_info(stored: StoredFile, described: dict[str, Any]) -> dict[str, Any]:
+    """FileInfo of an image: its description (format, size, EXIF …) plus the kind fields."""
+    return {"id": stored.id, **described, **kind_fields(stored)}
+
+
+def _image_size(path: Path, name: str | None) -> tuple[int, int] | None:
+    """Pixel size from the header (SVG: the size it is rasterised at; RAW: unknown → None)."""
+    try:
+        size = io.probe_size(str(path))
+    except Exception:
+        size = None
+    return size or _probe_size(path)
+
+
+def _accept_param(raw: str | None) -> frozenset[str] | None:
+    try:
+        return kinds.parse_accept(raw)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+
+
+AcceptQuery = Annotated[str | None, Query(max_length=64, description="comma list of kinds this page takes, "
+                                                                     "e.g. image or pdf,office")]
+
+
 @router.post("/files")
-def upload_files(request: Request, files: Annotated[list[UploadFile], File(description="images")]) -> Any:
-    """Store and decode each upload; per-file failures are reported in ``errors``."""
+def upload_files(request: Request, files: Annotated[list[UploadFile], File(description="files")],
+                 accept: AcceptQuery = None) -> Any:
+    """Store each upload, decide its kind from its bytes and describe it; failures are per file."""
     settings, store = _settings(request), _store(request)
+    accepted = _accept_param(accept)
     if len(files) > settings.max_files:
         raise HTTPException(413, f"Too many files: {len(files)} (max {settings.max_files} per upload)")
+    limiter = getattr(request.app.state, "limiter", None)
+    client = client_info(request, settings) if limiter is not None and limiter.enabled else None
     ok: list[dict] = []
     errors: list[dict] = []
     statuses: list[int] = []
+    retry_after = 0
 
     def fail(name: str, status: int, detail: str) -> None:
         errors.append({"name": name, "detail": detail})
@@ -337,7 +412,33 @@ def upload_files(request: Request, files: Annotated[list[UploadFile], File(descr
         except StoreError as exc:
             fail(name, exc.status, exc.detail)
             continue
-        size = _probe_size(stored.path)
+        if limiter is not None and client is not None:
+            try:  # hosted mode: bytes per client per hour (counted even when the file is refused below)
+                limiter.check("upload_bytes", client, stored.size_bytes)
+            except RateLimited as exc:
+                store.delete(stored.id)
+                retry_after = max(retry_after, exc.retry_after)
+                fail(name, 429, exc.detail)
+                continue
+        try:
+            sniffed = kinds.sniff(stored.path, upload.filename)
+        except kinds.FileKindError as exc:
+            store.delete(stored.id)
+            fail(name, exc.status, exc.detail)
+            continue
+        if sniffed.kind == "other":
+            store.delete(stored.id)
+            fail(name, 415, kinds.unsupported_detail(upload.filename))
+            continue
+        if accepted is not None and sniffed.kind not in accepted:
+            store.delete(stored.id)
+            fail(name, 415, kinds.refused_kind_detail(sniffed, accepted))
+            continue
+        if sniffed.kind == "html":  # the HTML → image tool's input: stored as it is, never parsed here
+            store.set_info(stored.id, kind="html", format=sniffed.format, mime=sniffed.mime)
+            ok.append(store.get(stored.id).info())
+            continue
+        size = _image_size(stored.path, upload.filename)
         if size and size[0] * size[1] > settings.max_pixels:  # refuse before decoding anything
             store.delete(stored.id)
             fail(name, 413, f"Image is {size[0]}×{size[1]} px ({size[0] * size[1] / 1e6:.0f} MP), "
@@ -346,7 +447,7 @@ def upload_files(request: Request, files: Annotated[list[UploadFile], File(descr
         try:
             weight = DECODE_BYTES_PER_PIXEL * (size[0] * size[1] if size else settings.max_pixels)
             with _job(request, weight):
-                loaded = io.load(str(stored.path))
+                loaded = io.load(str(stored.path), name=upload.filename)
                 described = imginfo.describe(loaded, name=stored.name, size_bytes=stored.size_bytes)
         except Exception as exc:
             store.delete(stored.id)
@@ -356,28 +457,57 @@ def upload_files(request: Request, files: Annotated[list[UploadFile], File(descr
                 mapped = (415, "Unsupported or corrupt image")
             fail(name, *mapped)
             continue
-        store.set_image_info(stored.id, width=loaded.image.width, height=loaded.image.height, fmt=loaded.format)
+        store.set_info(stored.id, kind="image", format=loaded.format, mime=described.get("mime") or sniffed.mime,
+                       width=loaded.image.width, height=loaded.image.height, frames=int(loaded.frames or 1))
         store.cache_put(stored.id, loaded)
-        ok.append({"id": stored.id, **described})
+        ok.append(image_file_info(store.get(stored.id), described))
 
     body = {"files": ok, "errors": errors}
     if ok or not errors:
         return body
     status = next((s for s in _UPLOAD_STATUS_PRIORITY if s in statuses), statuses[0])
     detail = errors[statuses.index(status)]["detail"]
-    headers = {"Retry-After": str(RETRY_AFTER_SECONDS)} if status == 503 else None
+    headers = None
+    if status == 503:
+        headers = {"Retry-After": str(RETRY_AFTER_SECONDS)}
+    elif status == 429:
+        headers = {"Retry-After": str(max(1, retry_after))}
     return JSONResponse({"detail": detail, **body}, status_code=status, headers=headers)
+
+
+def _require_image(stored: StoredFile) -> None:
+    """415 for a non-image file (an HTML page, a PDF or ZIP result) where an image is needed."""
+    if stored.kind != "image":
+        what = kinds.KIND_NAMES.get(stored.kind, "not an image")
+        raise HTTPException(415, f"{stored.name} is {what}, not an image")
 
 
 @router.get("/files/{file_id}")
 def file_info(file_id: str, request: Request) -> dict:
+    """FileInfo; images are described in full (EXIF included), other files from their stored metadata."""
     settings, store = _settings(request), _store(request)
     with _errors():
         stored = store.get(file_id)
+        if stored.kind != "image":
+            return stored.info()
         with _job(request, _decode_weight(stored, settings)):
             loaded = store.load(file_id)
             described = imginfo.describe(loaded, name=stored.name, size_bytes=stored.size_bytes, full_exif=True)
-    return {"id": file_id, **described}
+    return image_file_info(stored, described)
+
+
+@router.get("/files/{file_id}/download")
+def file_download(file_id: str, request: Request) -> Response:
+    """The stored bytes (an upload, or a job result for "Continue with" / saving), as an attachment."""
+    with _errors():
+        stored = _store(request).get(file_id)
+        handle = open(stored.path, "rb")  # noqa: SIM115 — closed by the streaming iterator
+    size = stored.size_bytes
+    with contextlib.suppress(OSError):
+        size = Path(stored.path).stat().st_size
+    headers = {"Content-Disposition": content_disposition(stored.name), "Content-Length": str(size)}
+    return StreamingResponse(_iter_file(handle), media_type=stored.mime or "application/octet-stream",
+                             headers=headers)
 
 
 def _preview_bucket(side: int, settings: Settings) -> bool:
@@ -392,6 +522,7 @@ def file_preview(file_id: str, request: Request, max_side: PreviewMax = None) ->
     cacheable = _preview_bucket(side, settings)
     with _errors():
         stored = store.get(file_id)
+        _require_image(stored)
         for ext, mime in (("jpg", "image/jpeg"), ("png", "image/png")) if cacheable else ():
             cached = store.read_aux(file_id, f"preview-{side}.{ext}")
             if cached is not None:
@@ -411,6 +542,7 @@ def file_faces(file_id: str, request: Request) -> dict:
     settings, store = _settings(request), _store(request)
     with _errors():
         stored = store.get(file_id)
+        _require_image(stored)
         try:
             from app.imaging import face
         except ImportError:
@@ -441,7 +573,16 @@ def _check_request(request: Request, req: ProcessRequest) -> list[StoredFile]:
     if len(req.ids) > settings.max_files:
         raise HTTPException(422, f"too many ids: {len(req.ids)} (max {settings.max_files})")
     with _errors():
-        return [store.get(file_id) for file_id in req.ids]
+        stored = [store.get(file_id) for file_id in req.ids]
+        for item in stored:
+            _require_image(item)
+    return stored
+
+
+def _frames(item: StoredFile, req: ProcessRequest) -> int:
+    """Frames the pipeline will process for ``item`` (1 unless an animation is written)."""
+    frames = int((item.meta or {}).get("frames") or 1)
+    return frames if pipeline.animated_output(item.format, frames, req.output) else 1
 
 
 def _plans(request: Request, stored: list[StoredFile], req: ProcessRequest) -> list[pipeline.Plan]:
@@ -454,7 +595,12 @@ def _plans(request: Request, stored: list[StoredFile], req: ProcessRequest) -> l
             side = int(settings.max_pixels ** 0.5)
             size = (side, side)
         with _errors(f"{item.name}: " if len(stored) > 1 else ""):
-            plans.append(pipeline.plan(size, req.ops_for(item.id), req.output, source_format=item.format or "jpeg"))
+            frames = _frames(item, req)
+            if frames > 1:  # frame-bomb guard before anything is decoded (413)
+                pipeline.check_animation_size(frames, int(size[0]), int(size[1]), max_frames=settings.max_anim_frames,
+                                              max_pixels=settings.max_anim_pixels)
+            plans.append(pipeline.plan(size, req.ops_for(item.id), req.output, source_format=item.format or "jpeg",
+                                       frames=frames))
     work = sum(p.work for p in plans)
     if work > REQUEST_WORK_BUDGET:
         raise HTTPException(413, f"This request is too much work for one go (about {work / 60:.0f} min of "
@@ -467,10 +613,38 @@ def _run(request: Request, stored: StoredFile, req: ProcessRequest) -> tuple[byt
     """Load, run and encode one file (the caller holds a job slot)."""
     store = _store(request)
     loaded = store.load(stored.id)
+    settings = _settings(request)
+    animation = None
+    if pipeline.wants_animation(loaded, req.output):  # every frame (GIF/WebP/APNG → animation)
+        animation = pipeline.load_animation(str(stored.path), max_frames=settings.max_anim_frames,
+                                            max_pixels=settings.max_anim_pixels)
     ctx = pipeline.run(loaded, req.ops_for(stored.id), cache_key=stored.id,
-                       max_pixels=_settings(request).max_pixels, alive=lambda: store.exists(stored.id))
+                       max_pixels=settings.max_pixels, alive=lambda: store.exists(stored.id),
+                       animation=animation, resolve_file=_resolver(request),
+                       max_anim_pixels=settings.max_anim_pixels)
     data, fmt, info = pipeline.render(ctx, req.output)
+    frames = int((stored.meta or {}).get("frames") or 1)
+    if animation is None and frames > 1 and not pipeline.animated_output(stored.format, frames, req.output):
+        still = pipeline.still_warning(fmt)
+        if still not in info["warnings"]:
+            info["warnings"].append(still)
     return data, fmt, info, ctx
+
+
+def _resolver(request: Request) -> Any:
+    """Ops may reference another upload (e.g. a watermark image): an image that exists → its Loaded."""
+    store = _store(request)
+
+    def resolve(file_id: str) -> Any:
+        try:
+            stored = store.get(file_id)
+        except StoreError:
+            raise HTTPException(422, "A file used by this edit (e.g. a watermark image) was not found or has "
+                                     "expired; upload it again") from None
+        _require_image(stored)
+        return store.load(file_id)
+
+    return resolve
 
 
 def _display_image(data: bytes, fmt: str, ctx: pipeline.Ctx, side: int) -> tuple[bytes, str]:
@@ -520,12 +694,40 @@ def preview(req: ProcessRequest, request: Request, max_side: PreviewMax = None) 
     }
 
 
+HOSTED_JOB_OPS = frozenset({"upscale", "background"})  # hosted mode: only as a job (img.process)
+HOSTED_SYNC_WORK = 60.0  # hosted mode: estimated CPU seconds one synchronous export may take (proxies cut at 60–100 s)
+USE_JOB_HEADER = "X-Heyp-Use-Job"
+
+
+def _hosted_sync_guard(request: Request, req: ProcessRequest, plans: list[pipeline.Plan]) -> None:
+    """Hosted mode: refuse exports that could outlive the reverse proxy's timeout (Cloudflare 100 s, Apache 60 s)
+    — they run as the ``img.process`` job instead — and count each export against the client's job bucket."""
+    settings = _settings(request)
+    if not settings.hosted:
+        return
+    lists = [req.ops, *(req.ops_by_id or {}).values()]
+    heavy = sorted({op.op for ops in lists for op in ops if op.op in HOSTED_JOB_OPS})
+    work = sum(p.work for p in plans)
+    if heavy or work > HOSTED_SYNC_WORK:
+        why = f"{' and '.join(heavy)} runs" if heavy else "this export takes"
+        raise HTTPException(422, f"On this server {why} as a background job: POST /api/jobs with tool "
+                                 "img.process (the same ops and output) to get progress and the result",
+                            headers={USE_JOB_HEADER: "img.process"})
+    limiter = getattr(request.app.state, "limiter", None)
+    if limiter is not None and limiter.enabled:
+        try:
+            limiter.check("jobs", client_info(request, settings))
+        except RateLimited as exc:
+            raise HTTPException(429, exc.detail, headers={"Retry-After": str(exc.retry_after)}) from None
+
+
 @router.post("/process")
 def process(req: ProcessRequest, request: Request) -> Response:
     """One id → the file; several → ZIP (or one PDF with ``format=pdf`` + ``combine_pdf``)."""
     stored = _check_request(request, req)
     with _store(request).pinned(req.ids):  # nothing expires half-way through a long batch
         plans = _plans(request, stored, req)
+        _hosted_sync_guard(request, req, plans)
         if len(stored) == 1:
             return _process_single(request, stored[0], req, plans[0])
         if req.output.format == "pdf" and req.output.combine_pdf:
@@ -586,7 +788,8 @@ def _process_combined_pdf(request: Request, stored: list[StoredFile], req: Proce
             raise ClientGone()
         with _errors(f"{item.name}: "), _job(request, plan.peak_bytes):
             ctx = pipeline.run(store.load(item.id), req.ops_for(item.id), cache_key=item.id,
-                               max_pixels=settings.max_pixels, alive=lambda i=item.id: store.exists(i))
+                               max_pixels=settings.max_pixels, alive=lambda i=item.id: store.exists(i),
+                               resolve_file=_resolver(request))
             img = ctx.image
             if req.output.colorspace == "srgb":
                 img = io.to_srgb(img, ctx.icc_profile)

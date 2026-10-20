@@ -236,6 +236,105 @@ def close_color(a: tuple[int, ...], b: tuple[int, ...], tol: int = 12) -> bool:
     return all(abs(int(x) - int(y)) <= tol for x, y in zip(a, b))
 
 
+# ------------------------------------------------------------------ v2 input factories
+def make_gif_bytes(n: int = 6, size: tuple[int, int] = (60, 40), *, durations: list[int] | None = None,
+                   loop: int | None = 0, transparent: bool = True) -> bytes:
+    """Animated GIF: frame i is a solid colour block moving right on a grey canvas; with
+    ``transparent`` the canvas is transparent (1-bit) around the block."""
+    w, h = size
+    frames = []
+    for i in range(n):
+        frame = Image.new("RGBA", size, (0, 0, 0, 0) if transparent else (128, 128, 128, 255))
+        x = (i * max(1, w // n)) % max(1, w - 10)
+        frame.paste((40 * i % 256, 200, 255 - 30 * i % 256, 255), (x, h // 4, x + 10, h // 4 + 10))
+        frames.append(frame)
+    params: dict = {"save_all": True, "append_images": frames[1:], "duration": durations or [40 + 10 * i for i in range(n)],
+                    "disposal": 2}
+    if loop is not None:
+        params["loop"] = loop
+    buf = io.BytesIO()
+    frames[0].save(buf, "GIF", **params)
+    return buf.getvalue()
+
+
+def make_frame_bomb_gif(frames: int, canvas: tuple[int, int] = (7000, 7000)) -> bytes:
+    """A tiny GIF that declares a huge logical screen and many 1×1 frames (critic blocking #4)."""
+    w, h = canvas
+    out = bytearray(b"GIF89a" + struct.pack("<HH", w, h) + bytes([0x80, 0, 0]) + b"\x00\x00\x00\xff\xff\xff")
+    out += b"\x21\xff\x0bNETSCAPE2.0\x03\x01\x00\x00\x00"
+    for _ in range(frames):
+        out += b"\x21\xf9\x04\x00\x0a\x00\x00\x00"                     # GCE: 100 ms
+        out += b"\x2c" + struct.pack("<HHHH", 0, 0, 1, 1) + b"\x00"   # 1×1 image descriptor
+        out += b"\x02\x02\x44\x01\x00"                                 # LZW data for one pixel
+    out += b"\x3b"
+    return bytes(out)
+
+
+def make_dng_bytes(size: tuple[int, int] = (64, 48), *, orientation: int = 1, make: bytes = b"heyp",
+                   levels: tuple[int, int, int] = (900, 600, 300)) -> bytes:
+    """Minimal uncompressed 16-bit RGGB DNG (LibRaw decodes it): R/G/B sensor levels of 4095."""
+    w, h = size
+    r, g, b = levels
+    ramp = np.linspace(0.15, 1.0, w, dtype=np.float32)[None, :]   # darker left → brighter right
+    cfa = np.zeros((h, w), np.float32)
+    cfa[0::2, 0::2], cfa[0::2, 1::2], cfa[1::2, 0::2], cfa[1::2, 1::2] = r, g, g, b
+    cfa = (cfa * ramp).astype(np.uint16)
+    data = cfa.astype("<u2").tobytes()
+    SHORT, LONG, ASCII, BYTE, SRATIONAL = 3, 4, 2, 1, 10
+    color_matrix = b"".join(struct.pack("<ii", v * 10000, 10000) for v in (1, 0, 0, 0, 1, 0, 0, 0, 1))
+    entries = sorted([
+        (254, LONG, 1, struct.pack("<I", 0)), (256, LONG, 1, struct.pack("<I", w)),
+        (257, LONG, 1, struct.pack("<I", h)), (258, SHORT, 1, struct.pack("<HH", 16, 0)),
+        (259, SHORT, 1, struct.pack("<HH", 1, 0)), (262, SHORT, 1, struct.pack("<HH", 32803, 0)),
+        (271, ASCII, len(make) + 1, make + b"\0"), (272, ASCII, 5, b"test\0"), (273, LONG, 1, None),
+        (274, SHORT, 1, struct.pack("<HH", orientation, 0)), (277, SHORT, 1, struct.pack("<HH", 1, 0)),
+        (278, LONG, 1, struct.pack("<I", h)), (279, LONG, 1, struct.pack("<I", len(data))),
+        (284, SHORT, 1, struct.pack("<HH", 1, 0)), (33421, SHORT, 2, struct.pack("<HH", 2, 2)),
+        (33422, BYTE, 4, bytes([0, 1, 1, 2])), (50706, BYTE, 4, bytes([1, 4, 0, 0])),
+        (50707, BYTE, 4, bytes([1, 1, 0, 0])), (50708, ASCII, 10, b"heyp test\0"),
+        (50717, LONG, 1, struct.pack("<I", 4095)), (50721, SRATIONAL, 9, color_matrix),
+        (50778, SHORT, 1, struct.pack("<HH", 21, 0)),
+    ], key=lambda e: e[0])
+    first_blob = 8 + 2 + 12 * len(entries) + 4
+    blobs, fields = b"", []
+    for tag, typ, count, value in entries:
+        if value is None:
+            fields.append((tag, typ, count, None))
+        elif len(value) <= 4:
+            fields.append((tag, typ, count, value.ljust(4, b"\0")))
+        else:
+            fields.append((tag, typ, count, struct.pack("<I", first_blob + len(blobs))))
+            blobs += value + (b"\0" if len(value) % 2 else b"")
+    strip = first_blob + len(blobs)
+    ifd = struct.pack("<H", len(fields)) + b"".join(
+        struct.pack("<HHI", tag, typ, count) + (value if value is not None else struct.pack("<I", strip))
+        for tag, typ, count, value in fields) + struct.pack("<I", 0)
+    return b"II*\0" + struct.pack("<I", 8) + ifd + blobs + data
+
+
+def make_psd_bytes(size: tuple[int, int] = (40, 30), *, depth: int = 8, psb: bool = False,
+                   color: tuple[float, float, float] = (1.0, 0.0, 0.0), layers: int = 0) -> bytes:
+    """PSD/PSB written by psd-tools: a solid ``color`` (0–1 floats) document, optionally with layers."""
+    from psd_tools import PSDImage
+
+    psd = PSDImage.new("RGB", size, color=(1.0, 1.0, 1.0) if layers else color, depth=depth)
+    if layers:
+        psd.create_pixel_layer(Image.new("RGB", size, tuple(int(c * 255) for c in color)), name="background")
+        for i in range(1, layers):
+            psd.create_pixel_layer(Image.new("RGB", (4, 4), (0, 255 - i, 0)), name=f"layer {i}")
+    if psb:
+        psd._record.header.version = 2  # noqa: SLF001 — psd-tools writes the large-document variant
+    buf = io.BytesIO()
+    psd.save(buf)
+    return buf.getvalue()
+
+
+def make_svg(body: str = '<rect x="10" y="10" width="80" height="60" fill="#ff0000"/>', *, width: str | None = "100",
+             height: str | None = "80", view_box: str | None = "0 0 100 80", extra: str = "") -> bytes:
+    attrs = "".join(f' {k}="{v}"' for k, v in (("width", width), ("height", height), ("viewBox", view_box)) if v)
+    return f'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"{attrs}{extra}>{body}</svg>'.encode()
+
+
 # ------------------------------------------------------------------ fixtures
 @pytest.fixture(name="make_image")
 def _make_image_fixture():

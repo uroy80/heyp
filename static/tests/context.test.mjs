@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 
 import {
   contextPlacement, contextFrame, zoomPivot, zoomShift, movedGuides, isSourceFrame, guideModel, CONTEXT_FILL,
+  SurroundSwitch, SURROUND_LINGER_MS, scrollsAround, wheelResizes,
 } from '../js/canvas.js';
 import { state, defaults, prePassportOps, framingOf, buildOps } from '../js/state.js';
 
@@ -273,4 +274,100 @@ test('context: the pre-passport ops are exactly the ops entering the passport op
   state.passport.layout = 'sheet'; // a sheet after the passport op doesn't change what enters it
   assert.equal(framingOf(buildOps(f)).baseKey, JSON.stringify(pre));
   assert.equal(framingOf([{ op: 'resize', mode: 'scale', scale: 50 }]), null);
+});
+
+// ── surroundings switch: only while the hand is on the photo ────────────────
+
+function fakeSwitch(linger = 400) {
+  const set = new Set();
+  const cls = { add: (c) => set.add(c), remove: (c) => set.delete(c), contains: (c) => set.has(c) };
+  let now = 0;
+  let seq = 0;
+  const due = new Map();
+  const timers = {
+    setTimeout: (fn, ms) => { seq += 1; due.set(seq, { at: now + ms, fn }); return seq; },
+    clearTimeout: (id) => { due.delete(id); },
+  };
+  const advance = (ms) => {
+    now += ms;
+    for (const [id, t] of [...due]) if (t.at <= now) { due.delete(id); t.fn(); }
+  };
+  return { sw: new SurroundSwitch(cls, { linger, timers }), advance, pending: () => due.size };
+}
+
+test('surroundings: off until the hand is on the photo, fade a moment after it lets go', () => {
+  const { sw, advance } = fakeSwitch(400);
+  assert.equal(sw.on, false);
+  sw.release(); // layout / previews / sliders: nothing to fade, nothing switched on
+  assert.equal(sw.on, false);
+  sw.hold();
+  assert.equal(sw.on, true);
+  advance(5000);
+  assert.equal(sw.on, true, 'stays up for as long as the drag lasts');
+  sw.release();
+  advance(399);
+  assert.equal(sw.on, true);
+  advance(1);
+  assert.equal(sw.on, false, 'gone after the linger even if no new preview arrived');
+});
+
+test('surroundings: repeated releases (re-layouts) never keep them up', () => {
+  const { sw, advance, pending } = fakeSwitch(400);
+  sw.hold();
+  sw.release();
+  for (let i = 0; i < 10; i++) { advance(100); sw.release(); }
+  assert.equal(sw.on, false);
+  assert.equal(pending(), 0);
+});
+
+test('surroundings: wheel / key pulses extend the fade from the last step; clear() is immediate', () => {
+  const { sw, advance } = fakeSwitch(400);
+  sw.pulse();
+  advance(300);
+  sw.pulse();
+  advance(300);
+  assert.equal(sw.on, true);
+  advance(100);
+  assert.equal(sw.on, false);
+  sw.hold();
+  sw.clear();
+  assert.equal(sw.on, false);
+  advance(1000);
+  assert.equal(sw.on, false);
+  assert.equal(SURROUND_LINGER_MS > 0 && SURROUND_LINGER_MS <= 600, true);
+});
+
+/** A fake element chain (innermost first) for scrollsAround: {sh, ch, oy} per node; the last is the page root. */
+function fakeChain(nodes, bodyOy = 'visible') {
+  const els = nodes.map(({ sh, ch, oy }) => ({ scrollHeight: sh, clientHeight: ch, oy, parentElement: null }));
+  for (let i = 0; i < els.length - 1; i++) els[i].parentElement = els[i + 1];
+  const root = els.at(-1);
+  const body = { oy: bodyOy };
+  const doc = { scrollingElement: root, documentElement: root, body };
+  const stage = { parentElement: els[0] };
+  return { stage, doc, style: (n) => ({ overflowY: n.oy }) };
+}
+
+test('wheel: a plain scroll over the pinned photo scrolls the page and never resizes the head', () => {
+  // phone / narrow window: the canvas is pinned (overflow hidden), the page scrolls under it
+  const narrow = fakeChain([{ sh: 492, ch: 342, oy: 'hidden' }, { sh: 2297, ch: 2297, oy: 'visible' }, { sh: 2375, ch: 856, oy: 'visible' }]);
+  const pageScrolls = scrollsAround(narrow.stage, narrow.style, narrow.doc);
+  assert.equal(pageScrolls, true);
+  assert.equal(wheelResizes({ ctrlKey: false }, pageScrolls), false, 'plain wheel scrolls the page');
+  assert.equal(wheelResizes({ ctrlKey: true }, pageScrolls), true, 'pinch / Ctrl + wheel still resizes');
+  // desktop: the document never scrolls, nothing around the photo does
+  const desk = fakeChain([{ sh: 600, ch: 600, oy: 'hidden' }, { sh: 900, ch: 900, oy: 'visible' }, { sh: 900, ch: 900, oy: 'visible' }]);
+  const deskScrolls = scrollsAround(desk.stage, desk.style, desk.doc);
+  assert.equal(deskScrolls, false);
+  assert.equal(wheelResizes({ ctrlKey: false }, deskScrolls), true, 'desktop: the wheel resizes the head');
+  // a page whose overflow is hidden (on html, or on body propagated to the viewport) does not scroll
+  const htmlHidden = fakeChain([{ sh: 2000, ch: 800, oy: 'hidden' }]);
+  assert.equal(scrollsAround(htmlHidden.stage, htmlHidden.style, htmlHidden.doc), false);
+  const bodyHidden = fakeChain([{ sh: 2000, ch: 800, oy: 'visible' }], 'hidden');
+  assert.equal(scrollsAround(bodyHidden.stage, bodyHidden.style, bodyHidden.doc), false);
+  // a scrolling panel-like ancestor counts; a 1 px rounding overflow does not
+  const inner = fakeChain([{ sh: 1200, ch: 500, oy: 'auto' }, { sh: 900, ch: 900, oy: 'visible' }]);
+  assert.equal(scrollsAround(inner.stage, inner.style, inner.doc), true);
+  const round = fakeChain([{ sh: 901, ch: 900, oy: 'visible' }]);
+  assert.equal(scrollsAround(round.stage, round.style, round.doc), false);
 });

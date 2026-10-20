@@ -122,13 +122,37 @@ def test_main_exits_nonzero_when_no_source_matches(fm, blobs, monkeypatch):
 
 
 def test_pins_cover_the_models_the_app_loads(fm):
-    from app.imaging import face, segment
+    from app.imaging import face, matting, plates, segment, upscale
 
-    assert set(fm.MODELS) == {face.YUNET_FILE, segment.MODEL_FILE}
+    loaded_by_app = {face.YUNET_FILE, segment.MODEL_FILE, plates.MODEL_FILE, *upscale.MODEL_FILES.values(),
+                     *matting.MODEL_FILES.values()}
+    assert set(fm.MODELS) == loaded_by_app
+    assert {n for n, m in fm.MODELS.items() if m.optional} == {matting.MODEL_FILES["int8"]}
     for model in fm.MODELS.values():
         assert re.fullmatch(r"[0-9a-f]{64}", model.sha256) and model.size > 100_000
         assert model.urls and all(u.startswith("https://") for u in model.urls)
         assert not any(re.search(r"/(raw|resolve)/(main|master)/", u) for u in model.urls)  # immutable refs
+        assert any(u.startswith(fm.RELEASE + "/") for u in model.urls)  # our release mirrors every file
+        assert model.licence and model.source
+
+
+def test_export_pins_match_fetch_pins(fm):
+    """scripts/export_models/SHA256SUMS (what the exports must reproduce) == the download pins."""
+    sums = {}
+    for line in (ROOT / "scripts" / "export_models" / "SHA256SUMS").read_text().splitlines():
+        if line.strip():
+            digest, name = line.split()
+            sums[name] = digest
+    assert sums and all(fm.MODELS[name].sha256 == digest for name, digest in sums.items())
+
+
+def test_selected_models_and_skip(fm):
+    required = fm.selected()
+    assert "birefnet-lite-dc-1024.int8.onnx" not in required and "birefnet-lite-dc-1024.onnx" in required
+    assert "birefnet-lite-dc-1024.int8.onnx" in fm.selected(with_optional=True)
+    assert "u2net_human_seg.onnx" not in fm.selected(skip={"u2net_human_seg.onnx"})
+    with pytest.raises(SystemExit, match="unknown model"):
+        fm.selected(skip={"nope.onnx"})
 
 
 # --- the installed models (dev and runtime images) --------------------------------------------------
@@ -137,10 +161,15 @@ def _models_dir() -> Path:
     return Path(os.environ.get("HEYP_MODELS_DIR", "/opt/heyp/models"))
 
 
-@pytest.mark.parametrize("name", ["face_detection_yunet_2023mar.onnx", "u2net_human_seg.onnx"])
+@pytest.mark.parametrize("name", ["face_detection_yunet_2023mar.onnx", "u2net_human_seg.onnx",
+                                  "realesr-general-x4v3.onnx", "realesr-general-x4v3-dn05.onnx",
+                                  "birefnet-lite-dc-1024.onnx", "birefnet-lite-dc-1024.int8.onnx",
+                                  "yolo-v9-t-640-license-plates-end2end.onnx"])
 def test_installed_model_matches_its_pin(fm, name):
     path = _models_dir() / name
     if not path.is_file():
+        if fm.MODELS[name].optional:  # fetched only with --with-optional: a plain skip, even under REQUIRE_MODELS
+            pytest.skip(f"optional {name} not installed")
         pytest.skip(f"model {name} not installed")
     assert fm.verify(str(path), fm.MODELS[name]), f"{path} does not match the pinned size/sha256"
 

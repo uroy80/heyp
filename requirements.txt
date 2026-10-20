@@ -12,20 +12,9 @@ pillow-heif==1.8.1
 numpy==2.5.4
 opencv-python-headless==5.0.0.93
 onnxruntime==1.31.0
-# --- heyp v2: image inputs + tools ---------------------------------------------------------------
+# --- image inputs and text -------------------------------------------------------------------------------
 resvg-py==0.5.0          # SVG → raster (MIT); always called with an explicit size cap + bundled fonts
 rawpy==0.27.1            # camera RAW (LibRaw, LGPL/CDDL)
 psd-tools==1.23.0        # 16/32-bit PSD + PSB (Pillow handles 8-bit composites)
 scour==0.38.2            # SVG optimiser — only ever with embed_rasters=False (no URL fetches)
-# --- heypdf light engines (AGPL-compatible) --------------------------------------------------------
-pymupdf==1.28.2          # MuPDF (AGPL-3.0) — merge/split/organize/render/redact/forms/edit/compare/markdown
-pikepdf==10.16.0         # qpdf — protect/unlock (known password only)/repair
-img2pdf==0.6.3           # lossless JPG → PDF
-pyhanko==0.37.0          # PAdES signatures with a user-supplied .p12
-pyhanko-certvalidator==0.32.1
-pdf2docx==0.5.13         # PDF → Word
-python-docx==1.2.0
-python-pptx==1.0.2
-openpyxl==3.1.5          # PDF → Excel
-# --- heypdf AI (off unless ANTHROPIC_API_KEY is set) ----------------------------------------------
-anthropic==1.11.0
+fonttools==4.67.0        # per-character font fallback for text on images (app/imaging/text.py)

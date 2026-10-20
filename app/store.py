@@ -1,9 +1,13 @@
-"""Temporary upload store (TTL'd per-upload directories) plus an LRU of decoded images.
+"""Temporary file store (TTL'd per-file directories) plus an LRU of decoded images.
 
-Layout: ``<root>/<id>/source`` (the uploaded bytes, untouched), ``<root>/<id>/meta.json`` and
-optional auxiliary cache files (e.g. rendered thumbnails). Ids are ``uuid4().hex`` and are
+Layout: ``<root>/<id>/source`` (the uploaded or produced bytes, untouched), ``<root>/<id>/meta.json``
+and optional auxiliary cache files (e.g. rendered thumbnails). Ids are ``uuid4().hex`` and are
 validated against ``^[0-9a-f]{32}$`` before any filesystem access. Removal first renames the
 directory to a ``.del-*`` tombstone, so a write racing with it can't leave files behind.
+
+Every file expires after ``ttl`` seconds of inactivity and — when ``hard_ttl`` is set (hosted mode) —
+at its hard deadline, ``hard_ttl`` after upload, whatever its activity. Job results
+(``source: "result"``) inherit the earliest hard deadline of their inputs (PLAN.md §8).
 """
 from __future__ import annotations
 
@@ -19,9 +23,9 @@ import unicodedata
 import uuid
 from collections import Counter, OrderedDict
 from collections.abc import Callable, Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 if TYPE_CHECKING:
     from app.imaging.io import Loaded
@@ -36,6 +40,9 @@ _NO_SPACE = {errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)}
 _RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
              *(f"LPT{i}" for i in range(1, 10))}
 _ILLEGAL = re.compile(r'[<>:"/\\|?*]')
+WORK_DIR_NAME = ".work"  # job working directories (removed with the store's contents at start-up)
+INFO_KEYS = frozenset({"kind", "format", "mime", "source", "parent_ids", "tool", "width", "height", "frames"})
+INFO_EXTRA_KEYS = ("frames",)
 
 
 class StoreError(Exception):
@@ -62,6 +69,29 @@ class StoredFile:
     width: int | None = None   # decoded (oriented) size and format, recorded after a successful upload
     height: int | None = None
     format: str | None = None
+    kind: str = "image"        # image | html (uploads); image | pdf | other (job results, see app.core.files)
+    mime: str | None = None
+    source: str = "upload"     # upload | result
+    parent_ids: tuple[str, ...] = ()
+    tool: str | None = None
+    hard_deadline: float | None = None  # epoch seconds; None = no hard limit
+    meta: dict | None = field(default=None, compare=False, repr=False)
+
+    def info(self) -> dict[str, Any]:
+        """FileInfo fields known without decoding (the API adds image details for images)."""
+        extra = self.meta or {}
+        out: dict[str, Any] = {
+            "id": self.id, "name": self.name, "kind": self.kind, "format": self.format,
+            "mime": self.mime, "size_bytes": self.size_bytes,
+            "source": self.source, "parent_ids": list(self.parent_ids), "tool": self.tool,
+            "expires_at": self.hard_deadline,
+        }
+        if self.width and self.height:
+            out["width"], out["height"] = self.width, self.height
+        for key in INFO_EXTRA_KEYS:
+            if key in extra:
+                out[key] = extra[key]
+        return out
 
 
 def is_valid_id(value: object) -> bool:
@@ -120,11 +150,14 @@ class FileStore:
 
     def __init__(self, root: str | os.PathLike[str], ttl: float, *, cache_items: int = 6,
                  cache_bytes: int = 512 * 1024 * 1024,
-                 on_remove: Callable[[str], None] | None = None) -> None:
+                 on_remove: Callable[[str], None] | None = None, hard_ttl: float = 0) -> None:
         if ttl <= 0:
             raise ValueError("ttl must be > 0 seconds")
+        if hard_ttl < 0:
+            raise ValueError("hard_ttl must be >= 0 seconds (0 = no hard limit)")
         self.root = Path(root)
         self.ttl = float(ttl)
+        self.hard_ttl = float(hard_ttl)
         self.cache_items = max(0, int(cache_items))
         self.cache_bytes = max(0, int(cache_bytes))
         self.on_remove = on_remove
@@ -157,9 +190,14 @@ class FileStore:
             if ID_RE.fullmatch(entry.name):
                 self._discard(entry.name)
                 removed += 1
-            elif entry.name.startswith(TOMBSTONE_PREFIX):
+            elif entry.name.startswith(TOMBSTONE_PREFIX) or entry.name == WORK_DIR_NAME:
                 self._remove_dir(entry)
         return removed
+
+    @property
+    def work_root(self) -> Path:
+        """Parent of the job working directories (inside the store volume, never served)."""
+        return self.root / WORK_DIR_NAME
 
     def cleanup_expired(self, now: float | None = None) -> list[str]:
         """Delete uploads idle for longer than the TTL (pinned ones excepted); returns the removed ids."""
@@ -171,7 +209,7 @@ class FileStore:
             if entry.name.startswith(TOMBSTONE_PREFIX):
                 self._remove_dir(entry)  # left over from an interrupted delete
             elif ID_RE.fullmatch(entry.name) and not self.is_pinned(entry.name) \
-                    and now - self._last_access(entry) > self.ttl:
+                    and (now - self._last_access(entry) > self.ttl or self._past_hard_deadline(entry, now)):
                 if self._discard(entry.name):
                     removed.append(entry.name)
         return removed
@@ -184,6 +222,7 @@ class FileStore:
         directory = self.root / file_id
         safe_name = clean_name(name)
         created = time.time()
+        hard = created + self.hard_ttl if self.hard_ttl > 0 else None
         try:
             self.root.mkdir(parents=True, exist_ok=True)
             directory.mkdir(mode=0o700)
@@ -196,7 +235,8 @@ class FileStore:
                     out.write(chunk)
             if written == 0:
                 raise StoreError(400, "File is empty")
-            meta = {"id": file_id, "name": safe_name, "size_bytes": written, "created": created}
+            meta = {"id": file_id, "name": safe_name, "size_bytes": written, "created": created,
+                    "source": "upload", "hard_deadline": hard}
             self._write_json(directory / META_NAME, meta)
         except OSError as exc:
             self._remove_dir(directory)
@@ -206,7 +246,58 @@ class FileStore:
         except BaseException:
             self._remove_dir(directory)
             raise
-        return StoredFile(file_id, safe_name, written, created, directory / SOURCE_NAME)
+        return StoredFile(file_id, safe_name, written, created, directory / SOURCE_NAME, hard_deadline=hard,
+                          meta=meta)
+
+    def save_result(self, data: bytes | str | os.PathLike[str], name: str, *, kind: str, fmt: str | None,
+                    mime: str | None, parent_ids: Iterable[str] = (), tool: str | None = None,
+                    hard_deadline: float | None = None, max_bytes: int | None = None) -> StoredFile:
+        """Store a job output (``source: "result"``). ``data`` is bytes or a path, which is moved in.
+
+        Results never outlive the hard deadline they are given (the earliest of their inputs'); with
+        none given they get the store's own hard TTL from now. Raises StoreError 413/507.
+        """
+        file_id = uuid.uuid4().hex
+        directory = self.root / file_id
+        safe_name = clean_name(name, default="result")
+        created = time.time()
+        if hard_deadline is None and self.hard_ttl > 0:
+            hard_deadline = created + self.hard_ttl
+        try:
+            self.root.mkdir(parents=True, exist_ok=True)
+            directory.mkdir(mode=0o700)
+            target = directory / SOURCE_NAME
+            if isinstance(data, (bytes, bytearray, memoryview)):
+                if max_bytes is not None and len(data) > max_bytes:
+                    raise StoreError(413, f"The result exceeds the {_human_size(max_bytes)} limit")
+                target.write_bytes(bytes(data))
+            else:
+                src = Path(data)
+                if max_bytes is not None and src.stat().st_size > max_bytes:
+                    raise StoreError(413, f"The result exceeds the {_human_size(max_bytes)} limit")
+                try:
+                    os.replace(src, target)
+                except OSError as exc:
+                    if exc.errno != errno.EXDEV:
+                        raise
+                    shutil.copyfile(src, target)
+            size = target.stat().st_size
+            if size == 0:
+                raise StoreError(422, "The tool produced an empty file")
+            meta = {"id": file_id, "name": safe_name, "size_bytes": size, "created": created,
+                    "kind": kind, "format": fmt, "mime": mime, "source": "result",
+                    "parent_ids": [p for p in parent_ids if is_valid_id(p)], "tool": tool,
+                    "hard_deadline": hard_deadline}
+            self._write_json(directory / META_NAME, meta)
+        except OSError as exc:
+            self._remove_dir(directory)
+            if exc.errno in _NO_SPACE:
+                raise StoreError(507, "Server storage full") from None
+            raise
+        except BaseException:
+            self._remove_dir(directory)
+            raise
+        return self._stored(file_id, meta, directory)
 
     def get(self, file_id: str) -> StoredFile:
         """Metadata for ``file_id``; refreshes its inactivity timer. Raises NotFound."""
@@ -218,21 +309,41 @@ class FileStore:
                 self.delete(file_id)
                 raise NotFound()
             meta = json.loads(meta_path.read_text("utf-8"))
+            hard = meta.get("hard_deadline")
+            if isinstance(hard, (int, float)) and time.time() > hard and not self.is_pinned(file_id):
+                self.delete(file_id)
+                raise NotFound()
             os.utime(meta_path)
         except (FileNotFoundError, NotADirectoryError, json.JSONDecodeError):
             raise NotFound() from None
+        meta.setdefault("created", mtime)
+        return self._stored(file_id, meta, directory)
+
+    @staticmethod
+    def _stored(file_id: str, meta: dict[str, Any], directory: Path) -> StoredFile:
         width, height, fmt = meta.get("width"), meta.get("height"), meta.get("format")
+        hard = meta.get("hard_deadline")
         return StoredFile(file_id, str(meta.get("name") or "image"), int(meta.get("size_bytes", 0)),
-                          float(meta.get("created", mtime)), directory / SOURCE_NAME,
+                          float(meta.get("created") or 0.0), directory / SOURCE_NAME,
                           int(width) if width else None, int(height) if height else None,
-                          str(fmt) if fmt else None)
+                          str(fmt) if fmt else None, kind=str(meta.get("kind") or "image"),
+                          mime=meta.get("mime") or None, source=str(meta.get("source") or "upload"),
+                          parent_ids=tuple(meta.get("parent_ids") or ()), tool=meta.get("tool") or None,
+                          hard_deadline=float(hard) if isinstance(hard, (int, float)) else None, meta=meta)
 
     def set_image_info(self, file_id: str, *, width: int, height: int, fmt: str) -> None:
         """Record the decoded size and format (lets jobs be planned without decoding)."""
+        self.set_info(file_id, width=int(width), height=int(height), format=fmt)
+
+    def set_info(self, file_id: str, **fields: Any) -> None:
+        """Merge FileInfo fields (kind, mime, width, height, …) into the file's metadata."""
+        unknown = set(fields) - INFO_KEYS
+        if unknown:
+            raise ValueError(f"unknown file info field(s): {', '.join(sorted(unknown))}")
         meta_path = self._dir(file_id) / META_NAME
         try:
             meta = json.loads(meta_path.read_text("utf-8"))
-            self._write_json(meta_path, {**meta, "width": int(width), "height": int(height), "format": fmt})
+            self._write_json(meta_path, {**meta, **fields})
         except (OSError, json.JSONDecodeError):
             pass  # deleted meanwhile; nothing to record
 
@@ -251,19 +362,27 @@ class FileStore:
     def pinned(self, file_ids: Iterable[str]) -> Iterator[None]:
         """Keep ``file_ids`` from expiring while a job runs; their idle timers restart when it ends."""
         ids = list(file_ids)
-        with self._lock:
-            self._pins.update(ids)
+        self.pin(ids)
         try:
             yield
         finally:
-            with self._lock:
-                self._pins.subtract(ids)
-                for file_id in ids:
-                    if self._pins[file_id] <= 0:
-                        del self._pins[file_id]
+            self.unpin(ids)
+
+    def pin(self, file_ids: Iterable[str]) -> None:
+        """Count a pin on each id (see :meth:`pinned`); every pin needs one :meth:`unpin`."""
+        with self._lock:
+            self._pins.update(list(file_ids))
+
+    def unpin(self, file_ids: Iterable[str]) -> None:
+        ids = list(file_ids)
+        with self._lock:
+            self._pins.subtract(ids)
             for file_id in ids:
-                with contextlib.suppress(OSError, StoreError):
-                    os.utime(self._dir(file_id) / META_NAME)
+                if self._pins[file_id] <= 0:
+                    del self._pins[file_id]
+        for file_id in ids:
+            with contextlib.suppress(OSError, StoreError):
+                os.utime(self._dir(file_id) / META_NAME)
 
     def is_pinned(self, file_id: str) -> bool:
         with self._lock:
@@ -303,7 +422,18 @@ class FileStore:
             return cached
         from app.imaging import io as imgio
 
-        loaded = imgio.load(str(stored.path))
+        loaded = None
+        if stored.format == "svg":  # rendered once per upload: later loads read the cached raster (img-07)
+            raster = self.read_aux(file_id, imgio.SVG_RASTER_AUX)
+            if raster:
+                try:
+                    loaded = imgio.load_svg_raster(raster)
+                except Exception:  # a damaged cache file: render again
+                    loaded = None
+        if loaded is None:
+            loaded = imgio.load(str(stored.path), name=stored.name)  # the name hints RAW flavours
+            if getattr(loaded, "format", None) == "svg":
+                self.write_aux(file_id, imgio.SVG_RASTER_AUX, imgio.encode_svg_raster(loaded) or b"")
         self.cache_put(file_id, loaded)
         if not self.exists(file_id):  # deleted while decoding: _discard renames before it evicts
             self.evict(file_id)
@@ -383,6 +513,15 @@ class FileStore:
         if not _AUX_RE.fullmatch(name) or name in (SOURCE_NAME, META_NAME):
             raise ValueError(f"invalid auxiliary file name {name!r}")
         return name
+
+    @staticmethod
+    def _past_hard_deadline(directory: Path, now: float) -> bool:
+        try:
+            meta = json.loads((directory / META_NAME).read_text("utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        hard = meta.get("hard_deadline")
+        return isinstance(hard, (int, float)) and now > hard
 
     @staticmethod
     def _last_access(directory: Path) -> float:

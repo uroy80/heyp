@@ -1,18 +1,29 @@
-"""Runtime settings read from ``HEYP_*`` environment variables (PLAN.md §2)."""
+"""Runtime settings read from ``HEYP_*`` environment variables (PLAN.md §2 "Configuration")."""
 from __future__ import annotations
 
+import ipaddress
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import lru_cache
+from urllib.parse import urlsplit
 
-VERSION = "1.1.0"
+VERSION = "2.0.0"
 MAX_DEFAULT_JOBS = 4  # each job on a max-size image can peak above 1 GB; more CPUs don't change that
 DEFAULT_MAX_PIXELS = 50_000_000  # 4 bytes/px in Pillow → 200 MB per decoded copy; phones produce 12–48 MP
 GIB = 1024 ** 3
 UPLOAD_REQUEST_MIN_MB = 256      # one upload request may carry this much (the UI sends ≤ 200 MB chunks)
+DEFAULT_SOURCE_URL = "https://github.com/uroy80/heyp"
+DEFAULT_SIBLING_URL = "http://localhost:8081"  # heypdf, the PDF toolbox (HEYP_SIBLING_URL=off hides the link)
+DEFAULT_HARD_TTL_MINUTES = 240   # hosted mode: files are deleted at most this long after upload
+MODES = ("local", "hosted")
+LANES = ("light", "heavy", "render")
+LANE_DEFAULTS = {"light": 2, "heavy": 1, "render": 1}  # sized for 2 vCPU / 8 GB
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
+_EMAIL_RE = re.compile(r"^[^@\s<>\"']+@[^@\s<>\"']+\.[^@\s<>\"']+$")
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def _available_cpus() -> int:
@@ -42,12 +53,43 @@ def memory_limit_bytes() -> int | None:
         return None
 
 
+def parse_trusted_proxies(raw: str) -> tuple[str, ...]:
+    """Comma/space separated IPs or CIDRs, normalised. ``*`` and catch-all networks are refused:
+    trusting every peer would let anyone spoof the client IP that rate limits are keyed on."""
+    out: list[str] = []
+    for part in re.split(r"[,\s]+", raw.strip()):
+        if not part:
+            continue
+        if part == "*":
+            raise ValueError("HEYP_TRUSTED_PROXIES must list proxy addresses, not '*'")
+        try:
+            net = ipaddress.ip_network(part, strict=False)
+        except ValueError:
+            raise ValueError(f"HEYP_TRUSTED_PROXIES: {part!r} is not an IP address or CIDR") from None
+        if net.prefixlen == 0:
+            raise ValueError(f"HEYP_TRUSTED_PROXIES: {part!r} would trust every address")
+        out.append(str(net))
+    return tuple(out)
+
+
+def _clean_url(name: str, raw: str) -> str:
+    raw = raw.strip().rstrip("/")
+    if not raw:
+        return ""
+    parts = urlsplit(raw)
+    if parts.scheme not in ("http", "https") or not parts.netloc or parts.query or parts.fragment \
+            or "@" in parts.netloc:
+        raise ValueError(f"{name} must be an http(s) URL without query or credentials, got {raw!r}")
+    return raw
+
+
 @dataclass(frozen=True)
 class Settings:
     """Immutable service configuration."""
 
     port: int = 8080
     max_upload_mb: int = 100
+    max_request_mb: int = 0  # cap on one upload request (MiB); 0 = automatic. Set it under a CDN's body limit.
     max_files: int = 200
     max_pixels: int = DEFAULT_MAX_PIXELS
     ttl_minutes: int = 60
@@ -60,6 +102,47 @@ class Settings:
     preview_max: int = 1600
     allow_cross_origin: bool = False
     docs: bool = False
+    # ---- deployment
+    mode: str = "local"                  # local | hosted (hosted: truthful copy, no-store, hard TTL, limits)
+    public_url: str = ""                 # e.g. https://heyp.example.org (no trailing slash)
+    sibling_url: str = DEFAULT_SIBLING_URL  # heypdf for the "heyp · heypdf" switch; "" = no link
+    hard_ttl_minutes: int = -1           # -1 = auto (240 hosted, 0 = off local)
+    trusted_proxies: tuple[str, ...] = ("127.0.0.1/32", "::1/128")
+    source_url: str = DEFAULT_SOURCE_URL
+    revision: str = ""                   # HEYP_REVISION (git commit baked into the image), shown in /api/config
+    # ---- legal / operator (rendered into /privacy, /terms and /api/config)
+    operator_name: str = ""
+    operator_email: str = ""
+    grievance_officer: str = ""
+    postal_address: str = ""
+    jurisdiction: str = ""
+    effective_date: str = ""
+    log_retention_days: int = 14
+    # ---- jobs
+    lane_light: int = LANE_DEFAULTS["light"]
+    lane_heavy: int = LANE_DEFAULTS["heavy"]
+    lane_render: int = LANE_DEFAULTS["render"]
+    queue_max: int = 32                  # queued (not yet running) jobs per lane → 503 + Retry-After
+    sandbox_mem_mb: int = 1024           # default RLIMIT_AS for run_isolated
+    sandbox_slots: int = 3               # sandboxed children alive at once (each may use sandbox_mem_mb)
+    sandbox_confine: bool = True         # Landlock + seccomp in sandbox children (HEYP_SANDBOX_CONFINE=0: rlimits only)
+    max_anim_pixels: int = 400_000_000   # decoded pixels across all frames of one animation
+    max_anim_frames: int = 1000
+    # ---- abuse limits (hosted mode on, local off unless HEYP_LIMITS=1)
+    limits: bool | None = None           # None = on in hosted mode
+    limit_upload_mb_hour: int = 2048
+    limit_jobs_minute: int = 30
+    limit_renders_minute: int = 6
+    limit_render_host_minute: int = 10
+    limit_active_jobs: int = 8           # queued + running jobs per client
+
+    @property
+    def hosted(self) -> bool:
+        return self.mode == "hosted"
+
+    @property
+    def limits_enabled(self) -> bool:
+        return self.hosted if self.limits is None else bool(self.limits)
 
     @property
     def max_upload_bytes(self) -> int:
@@ -68,6 +151,8 @@ class Settings:
     @property
     def max_request_bytes(self) -> int:
         """Largest multipart upload body accepted before parsing (one file at the limit always fits)."""
+        if self.max_request_mb:  # HEYP_MAX_REQUEST_MB (validated >= max_upload_mb + 1)
+            return self.max_request_mb * 1024 * 1024
         return (max(UPLOAD_REQUEST_MIN_MB, self.max_upload_mb) + 1) * 1024 * 1024
 
     @property
@@ -86,13 +171,27 @@ class Settings:
     def ttl_seconds(self) -> int:
         return self.ttl_minutes * 60
 
+    @property
+    def hard_ttl_effective_minutes(self) -> int:
+        """Hard upper bound on a file's life from upload (0 = none)."""
+        if self.hard_ttl_minutes >= 0:
+            return self.hard_ttl_minutes
+        return DEFAULT_HARD_TTL_MINUTES if self.hosted else 0
+
+    @property
+    def hard_ttl_seconds(self) -> int:
+        return self.hard_ttl_effective_minutes * 60
+
+    def lane_size(self, lane: str) -> int:
+        return max(1, int(getattr(self, f"lane_{lane}")))
+
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
         """Build settings from ``env`` (defaults to ``os.environ``); raises ValueError on bad values."""
         env = os.environ if env is None else env
         d = cls()
 
-        def num(name: str, default: int, minimum: int) -> int:
+        def num(name: str, default: int, minimum: int, maximum: int | None = None) -> int:
             raw = env.get(name)
             if raw is None or raw.strip() == "":
                 return default
@@ -102,13 +201,18 @@ class Settings:
                 raise ValueError(f"{name} must be an integer, got {raw!r}") from None
             if value < minimum:
                 raise ValueError(f"{name} must be >= {minimum}, got {value}")
+            if maximum is not None and value > maximum:
+                raise ValueError(f"{name} must be <= {maximum}, got {value}")
             return value
 
-        def text(name: str, default: str) -> str:
+        def text(name: str, default: str, max_len: int = 500) -> str:
             raw = env.get(name)
-            return raw.strip() if raw and raw.strip() else default
+            value = raw.strip() if raw and raw.strip() else default
+            if len(value) > max_len or any(ord(ch) < 32 for ch in value):
+                raise ValueError(f"{name} must be at most {max_len} printable characters")
+            return value
 
-        def flag(name: str, default: bool) -> bool:
+        def flag(name: str, default: bool | None) -> bool | None:
             raw = (env.get(name) or "").strip().lower()
             if not raw:
                 return default
@@ -118,9 +222,43 @@ class Settings:
                 return False
             raise ValueError(f"{name} must be 0 or 1, got {raw!r}")
 
+        mode = text("HEYP_MODE", d.mode).lower()
+        if mode not in MODES:
+            raise ValueError(f"HEYP_MODE must be 'local' or 'hosted', got {mode!r}")
+        public_url = _clean_url("HEYP_PUBLIC_URL", env.get("HEYP_PUBLIC_URL") or "")
+        source_url = _clean_url("HEYP_SOURCE_URL", env.get("HEYP_SOURCE_URL") or "") or DEFAULT_SOURCE_URL
+        raw_sibling = (env.get("HEYP_SIBLING_URL") or "").strip()
+        sibling_url = "" if raw_sibling.lower() == "off" else (_clean_url("HEYP_SIBLING_URL", raw_sibling)
+                                                               or DEFAULT_SIBLING_URL)
+        email = text("HEYP_OPERATOR_EMAIL", "", 254)
+        if email and not _EMAIL_RE.fullmatch(email):
+            raise ValueError(f"HEYP_OPERATOR_EMAIL is not an e-mail address: {email!r}")
+        effective = text("HEYP_EFFECTIVE_DATE", "", 10)
+        if effective and not _DATE_RE.fullmatch(effective):
+            raise ValueError("HEYP_EFFECTIVE_DATE must look like YYYY-MM-DD")
+        operator = text("HEYP_OPERATOR_NAME", "", 200)
+        hard_ttl = num("HEYP_HARD_TTL_MINUTES", d.hard_ttl_minutes, 0)
+        if mode == "hosted":
+            missing = [n for n, v in (("HEYP_OPERATOR_NAME", operator), ("HEYP_OPERATOR_EMAIL", email),
+                                      ("HEYP_PUBLIC_URL", public_url)) if not v]
+            if missing:
+                raise ValueError("hosted mode needs " + ", ".join(missing)
+                                 + " (published in the privacy policy and the terms)")
+            if hard_ttl == 0:
+                raise ValueError("HEYP_HARD_TTL_MINUTES can't be 0 in hosted mode: the privacy policy promises "
+                                 "a hard deletion deadline")
+        max_upload_mb = num("HEYP_MAX_UPLOAD_MB", d.max_upload_mb, 1)
+        max_request_mb = num("HEYP_MAX_REQUEST_MB", d.max_request_mb, 0)
+        if max_request_mb and max_request_mb < max_upload_mb + 1:
+            raise ValueError(f"HEYP_MAX_REQUEST_MB must be at least HEYP_MAX_UPLOAD_MB + 1 ({max_upload_mb + 1}) so "
+                             f"one file at the upload limit fits in a request, got {max_request_mb}")
+        raw_proxies = env.get("HEYP_TRUSTED_PROXIES")
+        proxies = d.trusted_proxies if raw_proxies is None else parse_trusted_proxies(raw_proxies)
+
         return cls(
             port=num("HEYP_PORT", d.port, 1),
-            max_upload_mb=num("HEYP_MAX_UPLOAD_MB", d.max_upload_mb, 1),
+            max_upload_mb=max_upload_mb,
+            max_request_mb=max_request_mb,
             max_files=num("HEYP_MAX_FILES", d.max_files, 1),
             max_pixels=num("HEYP_MAX_PIXELS", d.max_pixels, 1),
             ttl_minutes=num("HEYP_TTL_MINUTES", d.ttl_minutes, 1),
@@ -131,8 +269,37 @@ class Settings:
             job_memory_mb=num("HEYP_JOB_MEMORY_MB", d.job_memory_mb, 0),
             models_dir=text("HEYP_MODELS_DIR", d.models_dir),
             preview_max=num("HEYP_PREVIEW_MAX", d.preview_max, 16),
-            allow_cross_origin=flag("HEYP_ALLOW_CROSS_ORIGIN", d.allow_cross_origin),
-            docs=flag("HEYP_DOCS", d.docs),
+            allow_cross_origin=bool(flag("HEYP_ALLOW_CROSS_ORIGIN", d.allow_cross_origin)),
+            docs=bool(flag("HEYP_DOCS", d.docs)),
+            mode=mode,
+            public_url=public_url,
+            sibling_url=sibling_url,
+            hard_ttl_minutes=hard_ttl,
+            trusted_proxies=proxies,
+            source_url=source_url,
+            revision=re.sub(r"[^0-9A-Za-z._-]", "", env.get("HEYP_REVISION") or "")[:64],
+            operator_name=operator,
+            operator_email=email,
+            grievance_officer=text("HEYP_GRIEVANCE_OFFICER", "", 200),
+            postal_address=text("HEYP_POSTAL_ADDRESS", "", 500),
+            jurisdiction=text("HEYP_JURISDICTION", "", 200),
+            effective_date=effective,
+            log_retention_days=num("HEYP_LOG_RETENTION_DAYS", d.log_retention_days, 0, 3650),
+            lane_light=num("HEYP_LANE_LIGHT", d.lane_light, 1, 64),
+            lane_heavy=num("HEYP_LANE_HEAVY", d.lane_heavy, 1, 64),
+            lane_render=num("HEYP_LANE_RENDER", d.lane_render, 1, 64),
+            queue_max=num("HEYP_QUEUE_MAX", d.queue_max, 0, 10_000),
+            sandbox_mem_mb=num("HEYP_SANDBOX_MEM_MB", d.sandbox_mem_mb, 64),
+            sandbox_slots=num("HEYP_SANDBOX_SLOTS", d.sandbox_slots, 1, 64),
+            sandbox_confine=bool(flag("HEYP_SANDBOX_CONFINE", d.sandbox_confine)),
+            max_anim_pixels=num("HEYP_MAX_ANIM_PIXELS", d.max_anim_pixels, 1),
+            max_anim_frames=num("HEYP_MAX_ANIM_FRAMES", d.max_anim_frames, 1, 100_000),
+            limits=flag("HEYP_LIMITS", d.limits),
+            limit_upload_mb_hour=num("HEYP_LIMIT_UPLOAD_MB_HOUR", d.limit_upload_mb_hour, 1),
+            limit_jobs_minute=num("HEYP_LIMIT_JOBS_MINUTE", d.limit_jobs_minute, 1),
+            limit_renders_minute=num("HEYP_LIMIT_RENDERS_MINUTE", d.limit_renders_minute, 1),
+            limit_render_host_minute=num("HEYP_LIMIT_RENDER_HOST_MINUTE", d.limit_render_host_minute, 1),
+            limit_active_jobs=num("HEYP_LIMIT_ACTIVE_JOBS", d.limit_active_jobs, 1),
         )
 
 

@@ -6,8 +6,10 @@ import { api, imageRetryDelay } from './js/api.js';
 import {
   state, activeFile, buildOps, buildOutput, preCropOps, prePassportOps, framingOf, describeEdits, baseDims, ratioValue,
   passportActive, rotateQuarter, cropRatioFor, exportRequest, exportLimitError, warningSummary, qualityApplies,
-  planUploads, FORMAT_LABEL,
+  planUploads, FORMAT_LABEL, newId, toolEntry, hasHeavyOps, upscaleActive, exportNeedsJob, hasJobOps, upscaleProblems,
+  upscaleInputDims, stillAnimations,
 } from './js/state.js';
+import { deleteKeyAction } from './js/keys.js';
 import { Canvas, isSourceFrame, zoomPivot } from './js/canvas.js';
 import { fitRatio, snapBox } from './js/cropbox.js';
 import { toast, initTheme } from './js/ui.js';
@@ -21,13 +23,33 @@ import compressTool from './js/tools/compress.js';
 import editTool from './js/tools/edit.js';
 import backgroundTool from './js/tools/background.js';
 import infoTool from './js/tools/info.js';
+import upscaleTool from './js/tools/upscale.js';
+import watermarkTool from './js/tools/watermark.js';
+import blurTool from './js/tools/blur.js';
+import editorTool from './js/tools/editor.js';
+import memeTool from './js/tools/meme.js';
+import gifTool, { GIF_TOOL } from './js/tools/gif.js';
+import htmlTool from './js/tools/html.js';
+import { Editing, EDIT_STAGE, stageBaseOps } from './js/editing.js';
+import { normalizeDetections, mergeRegions, loupeRegion } from './js/stagekit.js';
+import { jobs } from './js/jobs.js';
+import { startRun, getRun, resultFile, continueMenu } from './js/jobui.js';
+import { copyFor, expiryReason, siblingUrl } from './js/config.js';
+import { continueTargets, outputKind, HEYP_CONTINUE } from './js/continue.js';
+import { FILTERS, FRAMES, adoptEnums } from './js/catalog.js';
 
-const TOOLS = [convertTool, resizeTool, cropTool, passportTool, compressTool, editTool, backgroundTool, infoTool];
+/** Sections in rail order; 1–9 switch to the first nine, the "?" dialog lists them all. */
+const TOOLS = [
+  convertTool, resizeTool, cropTool, passportTool, compressTool, editTool, backgroundTool, upscaleTool, watermarkTool,
+  blurTool, editorTool, memeTool, gifTool, htmlTool, infoTool,
+];
+const SHORTCUTS = 9;
 /** Section kickers above each tool headline ("04 · Passport & ID"). */
 const KICKER = {
   convert: 'File format', resize: 'Size & print', crop: 'Framing', passport: 'Passport & ID',
   compress: 'File size', edit: 'Orientation & tone', background: 'Cut-out', info: 'Inside the file',
 };
+const kickerOf = (t) => t.kicker || KICKER[t.id] || t.title;
 const UNDO_MS = 8000;
 const NARROW = window.matchMedia('(max-width: 780px)');
 const REDUCE_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -56,6 +78,22 @@ const canvas = new Canvas($('#canvas'), {
   onCropCommit: (box) => cropFromBox(box),
 });
 
+/** The v2 editing layer (blur boxes, watermark, meme captions, editor layers, upscale detail square). */
+const editing = new Editing(canvas, {
+  changed: (opts) => changed(opts),
+  selection: () => {
+    if (state.tool === 'editor') refreshPanel();
+    else syncPanel();
+  },
+  activate: (it) => {
+    if (it?.kind === 'text') editorTool.focusText();
+  },
+  logoSrc: () => (state.watermark.imageId ? api.previewUrl(state.watermark.imageId, 800) : ''),
+  stickerSrc: (id) => stickerUrl(id),
+  loupeDims: () => upscaleInput(),
+  notify: (msg) => toast(msg, 'warn'),
+});
+
 let comparing = false;
 let previewPending = false;
 let basePending = false;
@@ -76,6 +114,31 @@ const app = {
   fileFull,
   canOutput,
   lastPreview: () => activeFile()?.preview || null,
+  // v2 surface (see the v2 section below)
+  copy: () => copyFor(state.config),
+  hasFiles: () => state.files.length > 0,
+  hasEdits: () => state.files.some((f) => buildOps(f).length > 0),
+  thumbUrl: (id, max = 240) => api.previewUrl(id, max),
+  catalog: () => editorCatalog(),
+  uploadAux,
+  dropAux,
+  auxExpired,
+  newBlank,
+  detect,
+  detectBusy: () => detectBusy,
+  selectedItem: () => editing.selected,
+  selectItem,
+  addItem,
+  removeItem: (id) => editing.remove(id),
+  moveItem,
+  moveFileTo,
+  upscaleInput,
+  loupeView,
+  runTool,
+  makeGif,
+  gifAppliesEdits,
+  canApplyEdits: () => Boolean(processTool()),
+  resultView,
   crop: {
     setRatio: cropSetRatio,
     auto: cropAuto,
@@ -129,9 +192,10 @@ function setFormat(fmt) {
 function buildRail() {
   el.toolList.replaceChildren(...TOOLS.map((t, i) => h('li', {},
     h('button', {
-      type: 'button', class: 'rail-btn', dataset: { tool: t.id }, title: `${t.title} (${i + 1})`,
+      type: 'button', class: 'rail-btn', dataset: { tool: t.id }, title: i < SHORTCUTS ? `${t.title} (${i + 1})` : t.title,
       onclick: () => setTool(t.id),
-    }, icon(t.icon, 18), h('span', { class: 'rail-label' }, t.title), h('span', { class: 'rail-dot', 'aria-hidden': 'true' }), h('kbd', { class: 'rail-kbd', 'aria-hidden': 'true' }, String(i + 1))))));
+    }, icon(t.icon, 18), h('span', { class: 'rail-label' }, t.rail || t.title), h('span', { class: 'rail-dot', 'aria-hidden': 'true' }), h('kbd', { class: 'rail-kbd', 'aria-hidden': 'true' }, String(i + 1).padStart(2, '0'))))));
+  buildSectionIndex();
   syncRail();
 }
 
@@ -143,14 +207,18 @@ function syncRail() {
     else btn.removeAttribute('aria-current');
     const active = t.isActive();
     btn.classList.toggle('has-edit', active);
-    btn.setAttribute('aria-label', `${t.title}${active ? ' (active)' : ''}`);
+    // the name starts with the visible label (WCAG 2.5.3): "Web page (HTML → image)", "Resize (has edits)"
+    const name = t.rail && t.rail !== t.title ? `${t.rail} (${t.title})` : t.title;
+    btn.setAttribute('aria-label', `${name}${active ? ' (has edits)' : ''}`);
   }
 }
 
 function setTool(id) {
   if (!TOOLS.some((t) => t.id === id) || state.tool === id) return;
   if (comparing) setCompare(false);
+  currentTool().leave?.(app);
   state.tool = id;
+  editing.selected = null;
   if (id === 'crop') snapshotCrop();
   else cropSnapshot = null;
   syncRail();
@@ -205,7 +273,7 @@ function refreshPanel() {
   el.panel.replaceChildren();
   el.panel.setAttribute('aria-labelledby', 'tool-title');
   tool.render(el.panel, app);
-  el.panel.querySelector('.tool-head')?.prepend(h('p', { class: 'tool-kicker' }, `${String(TOOLS.indexOf(tool) + 1).padStart(2, '0')} · ${KICKER[tool.id]}`));
+  el.panel.querySelector('.tool-head')?.prepend(h('p', { class: 'tool-kicker' }, `${String(TOOLS.indexOf(tool) + 1).padStart(2, '0')} · ${kickerOf(tool)}`));
   renderedTool = tool.id;
   el.panel.querySelectorAll('details').forEach((d, i) => { if (open[i]) d.open = true; });
   el.panel.scrollTop = scroll;
@@ -282,6 +350,7 @@ function renderCanvas() {
   document.body.classList.toggle('has-files', state.files.length > 0);
   el.compare.hidden = !f || cropBoxMode();
   if (!panFor(f)) canvas.setPan(null);
+  if (!f || comparing || cropBoxMode()) editing.update({ tool: null });
   if (!f) {
     canvas.crop.show(false);
     canvas.setBadge('');
@@ -317,6 +386,7 @@ function renderCanvas() {
     return;
   }
   canvas.crop.show(false);
+  if (renderStageBase(f)) return;
   let badge = '';
   if (state.tool === 'crop' && f.crop && !passportActive()) badge = f.crop.kind === 'trim' ? 'Auto trim' : `${f.crop.anchor === 'face' ? 'Face' : 'Smart'} crop`;
   canvas.setBadge(badge);
@@ -325,6 +395,7 @@ function renderCanvas() {
   if (!guidesFor(f)) canvas.setGuides(null);
   canvas.show(src, p ? { w: p.width, h: p.height } : infoDims(f), f.name, { context: contextFor(f) }).then(() => {
     if (canvas.src === src && activeFile() === f && !comparing) canvas.setGuides(guidesFor(f));
+    if (canvas.src === src && activeFile() === f && !comparing) syncEditing(f, previewFresh(f));
   });
   if (panFor(f)) canvas.setPan(PAN);
 }
@@ -347,10 +418,14 @@ const PAN = {
     const p = state.passport;
     return [clamp(p.offsetX + fx, -PAN_LIMIT, PAN_LIMIT) - p.offsetX, clamp(p.offsetY + fy, -PAN_LIMIT, PAN_LIMIT) - p.offsetY];
   },
+  /** Head size + step; false when that changes nothing (at the limit, or a step too small to register). */
   onZoom(step) {
     const p = state.passport;
-    p.zoom = round3(clamp(p.zoom + step, ZOOM_MIN, ZOOM_MAX));
+    const zoom = round3(clamp(p.zoom + step, ZOOM_MIN, ZOOM_MAX));
+    if (zoom === p.zoom) return false;
+    p.zoom = zoom;
     changed();
+    return true;
   },
   /** Touch pinch: head size × ratio. */
   onZoomBy(ratio) {
@@ -437,7 +512,7 @@ function setBasePending(v) {
 function previewRequest(f) {
   const output = buildOutput();
   output.filename = null;
-  return { ids: [f.id], ops: buildOps(f), output };
+  return { ids: [f.id], ops: buildOps(f, { preview: true }), output }; // heavy ops (upscale) run on export only
 }
 
 async function runPreview() {
@@ -688,7 +763,7 @@ function expire(files) {
   if (!list.length) return;
   dropFiles(list.map((f) => f.id));
   const what = list.length === 1 ? `“${list[0].name}” is` : `${list.length} photos are`;
-  toast(`${what} no longer on the server (removed after inactivity or a restart). Add ${list.length === 1 ? 'it' : 'them'} again to keep working.`, 'warn', { timeout: 10000 });
+  toast(`${what} no longer on the server (${expiryReason(state.config)}). Add ${list.length === 1 ? 'it' : 'them'} again to keep working.`, 'warn', { timeout: 10000 });
 }
 
 function handleFileError(e, f) {
@@ -757,7 +832,7 @@ async function addFiles(list) {
         const res = await api.upload(chunk, (frac) => {
           const all = (sent + frac * size) / total;
           showUpload(all >= 0.999 ? `Reading ${noun}…` : `Uploading ${noun}… ${Math.round(all * 100)}%`, all);
-        });
+        }, { accept: 'image' }); // anything but an image (an HTML page, a PDF) is refused with a reason
         added.push(...res.files);
         errors.push(...res.errors);
       } catch (e) {
@@ -773,7 +848,7 @@ async function addFiles(list) {
 
   for (const info of added) {
     if (state.files.some((f) => f.id === info.id)) continue;
-    state.files.push({ id: info.id, name: info.name, info, crop: null, preview: null, previewKey: null, previewFraming: null, previewError: null, cropBase: null, cropBasePending: null, passportBase: null, passportBasePending: null, full: null });
+    state.files.push(fileRecord(info));
   }
   if (added.length) {
     state.activeId = null;
@@ -784,6 +859,18 @@ async function addFiles(list) {
 
 function reportUploadErrors(errors) {
   if (!errors.length) return;
+  // a PDF isn't "damaged": it belongs in heypdf, a separate site (a plain link — nothing is sent there)
+  const pdfs = errors.filter((e) => /\.pdf$/i.test(String(e.name || '')));
+  if (pdfs.length) {
+    errors = errors.filter((e) => !pdfs.includes(e));
+    const sibling = siblingUrl(state.config);
+    const what = pdfs.length === 1 ? `“${pdfs[0].name}” is a PDF` : `${pdfs.length} files are PDFs`;
+    toast(`${what} — heyp opens images only.${sibling ? ' heypdf, a separate site, has the PDF tools: add the file there.' : ''}`, 'warn', {
+      timeout: 10000,
+      action: sibling ? { label: 'Open heypdf', onClick: () => window.open(sibling, '_blank', 'noopener') } : undefined,
+    });
+    if (!errors.length) return;
+  }
   const details = [...new Set(errors.map((e) => e.detail || 'unsupported file'))];
   if (errors.length === 1) {
     toast(`Couldn’t add “${errors[0].name}”: ${details[0]}`, 'error');
@@ -964,7 +1051,7 @@ function buildExport() {
   el.exportBox.replaceChildren(
     h('h2', { class: 'export-title', id: 'export-title' }, 'Export'),
     h('div', { class: 'export-grid' }, exportUi.format, exportUi.quality, exportUi.qualityAuto),
-    exportUi.keepMeta, exportUi.keepGps, exportUi.btn, exportUi.meta);
+    exportUi.keepMeta, exportUi.keepGps, exportUi.btn, exportUi.meta, exportUi.cont = h('div', { class: 'export-continue' }));
   syncExport();
 }
 
@@ -993,8 +1080,27 @@ function syncExport() {
   let label = `Download${fmt}`;
   if (n > 1) label = o.format === 'pdf' && o.combinePdf ? `Download PDF · ${n} pages` : `Download ${n} files · ZIP`;
   setText(exportUi.label, label);
-  const facts = p ? [`${p.width}×${p.height}`, fmtBytes(p.size_bytes), achievedQ(p)].filter(Boolean).join(' · ') : '';
-  setText(exportUi.meta, !n ? 'Add photos to export.' : p && n === 1 ? facts : p ? `This photo: ${facts}` : '');
+  const up = upscaleActive() ? state.upscale.factor : 0; // previews leave the upscale out: say what the file will be
+  const facts = !p ? '' : up ? `${p.width * up}×${p.height * up} · upscaled ${up}× on download` : [`${p.width}×${p.height}`, fmtBytes(p.size_bytes), achievedQ(p)].filter(Boolean).join(' · ');
+  const notes = exportNotes();
+  setText(exportUi.meta, [!n ? 'Add photos to export.' : p && n === 1 ? facts : p ? `This photo: ${facts}` : '', ...notes].filter(Boolean).join(' · '));
+  exportUi.meta.classList.toggle('is-warn', notes.length > 0);
+  syncContinue();
+}
+
+/** What the export will do that the preview of one photo doesn't show: photos too large for the upscale, animations kept as stills. */
+function exportNotes() {
+  const notes = [];
+  const files = state.files;
+  if (upscaleActive() && files.length > 1) {
+    const bad = upscaleProblems(files, upscaleInputDims);
+    if (bad.length) notes.push(`${bad.length} photo${bad.length > 1 ? 's are' : ' is'} too large for ${state.upscale.factor}×`);
+  }
+  const stills = stillAnimations(files);
+  // named when it isn't the photo on screen ("This photo: …" sits right before this note)
+  const which = stills.length > 1 ? `${stills.length} animations` : files.length > 1 ? `“${stills[0]?.name}”` : 'The animation';
+  if (stills.length) notes.push(`${which} will keep only the first frame in ${FORMAT_LABEL[state.output.format] || state.output.format} — choose GIF, WebP or Same as original to keep ${stills.length > 1 ? 'them' : 'it'} moving`);
+  return notes;
 }
 
 /** Export busy state: only download() starts and ends it, so nothing can leave the button stuck. */
@@ -1045,18 +1151,87 @@ async function download() {
     toast(tooMany, 'error');
     return;
   }
+  if (upscaleActive()) {
+    // the panel checks the photo on screen; the server refuses the whole batch for one photo that's too large
+    const bad = upscaleProblems(files, upscaleInputDims);
+    if (bad.length) {
+      const names = bad.slice(0, 3).map((x) => `“${x.file.name}”`).join(', ') + (bad.length > 3 ? ` and ${bad.length - 3} more` : '');
+      toast(`${names} ${bad.length > 1 ? 'are' : 'is'} too large for a ${state.upscale.factor}× upscale. Choose 2×, or crop or resize ${bad.length > 1 ? 'them' : 'it'} first.`, 'error', { timeout: 10000 });
+      return;
+    }
+  }
   const req = exportRequest(files);
-  beginExport(files.length > 1 ? `Exporting ${files.length} photos…` : 'Exporting…');
+  beginExport(exportBusyText(files));
   try {
-    const res = await api.process(req);
-    saveBlob(res.blob, res.filename || fallbackName(files, req.output));
-    if (res.warnings.length) toast(warningSummary(res.warnings), 'warn', { timeout: 10000 });
+    // several photos or slow edits run as a job: progress, and no proxy cuts the request off after 60–100 s
+    if (processTool() && exportNeedsJob(files)) {
+      await exportViaJob(req, files);
+    } else {
+      try {
+        const res = await api.process(req);
+        saveBlob(res.blob, res.filename || fallbackName(files, req.output));
+        if (res.warnings.length) toast(warningSummary(res.warnings), 'warn', { timeout: 10000 });
+      } catch (e) {
+        if (!(e?.useJob === PROCESS_TOOL && processTool())) throw e;
+        await exportViaJob(req, files); // the server runs this one as a job (hosted mode, a long export)
+      }
+    }
+    exportUi.done = true;
+    syncContinue();
   } catch (e) {
+    if (e?.name === 'AbortError' || e?.cancelled) return;
     if (e?.status === 404) await findExpired(files, e);
     else toast(e?.detail || 'Export failed', 'error');
   } finally {
     endExport();
   }
+}
+
+/** Registry tool that runs the export pipeline as a job (SSE progress). */
+const PROCESS_TOOL = 'img.process';
+
+/** The img.process registry entry when the server offers it (and it is available), else null. */
+function processTool() {
+  const t = toolEntry(PROCESS_TOOL);
+  return t && t.available !== false ? t : null;
+}
+
+/** img.process options for a ProcessRequest (`ids` become the job's file_ids). */
+const processOptions = (req) => ({ ops: req.ops, ...(req.ops_by_id ? { ops_by_id: req.ops_by_id } : {}), output: req.output });
+
+/** Job outputs this page created and hasn't handed on: deleted with the page (pagehide) like the uploads. */
+const resultFiles = new Set();
+
+function trackResults(res) {
+  for (const f of res?.files || []) if (f?.id) resultFiles.add(f.id);
+  if (res?.zip?.id) resultFiles.add(res.zip.id);
+}
+
+/** Run the export pipeline as a job with the progress on the Download button; resolves the job result. */
+async function runProcessJob(req, { label = 'Exporting', signal } = {}) {
+  const res = await jobs.run(
+    { tool: PROCESS_TOOL, file_ids: req.ids, options: processOptions(req) },
+    {
+      signal,
+      onQueued: (pos) => setText(exportUi.label, pos > 0 ? `Waiting — ${pos} ahead…` : 'Starting…'),
+      onProgress: (p, msg) => setText(exportUi.label, `${msg || label} ${Math.round(Math.min(1, p) * 100)}%`),
+    },
+  );
+  trackResults(res);
+  return res;
+}
+
+async function exportViaJob(req, files) {
+  const res = await runProcessJob(req, { label: hasHeavyOps(files) ? 'Upscaling' : 'Exporting' });
+  const out = res.zip || res.files?.[0];
+  if (!out?.id) throw new Error('The export finished without a file');
+  // a ZIP or combined PDF gets the name a direct download would have had
+  const name = res.zip || files.length > 1 ? fallbackName(files, req.output) : out.name || fallbackName(files, req.output);
+  const a = h('a', { href: api.downloadUrl(out.id), download: name, hidden: true });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  if (res.warnings?.length) toast(warningSummary(res.warnings), 'warn', { timeout: 10000 });
 }
 
 async function findExpired(files, err) {
@@ -1127,6 +1302,7 @@ function initKeyboard() {
     }
     if (el.help.open) return;
     const typing = isTyping(e.target);
+    if (!typing && editing.active && e.target.closest?.('.ov-layer')) return; // the editing layer handles its own keys
     if (e.key === 'Escape') {
       if (state.tool === 'crop' && !typing) revertCrop();
       return;
@@ -1138,7 +1314,7 @@ function initKeyboard() {
       if (!e.repeat) setCompare(true);
       return;
     }
-    if (/^[1-8]$/.test(e.key)) {
+    if (/^[1-9]$/.test(e.key) && Number(e.key) <= Math.min(SHORTCUTS, TOOLS.length)) {
       e.preventDefault();
       setTool(TOOLS[Number(e.key) - 1].id);
     } else if (key === 'r') {
@@ -1146,11 +1322,18 @@ function initKeyboard() {
       rotateQuarter(e.shiftKey ? -1 : 1);
       changed({ panel: state.tool === 'edit' || state.tool === 'crop' });
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
-      // only from "neutral" focus (page, canvas, strip) so a stray key on a slider never drops a photo
+      // only from "neutral" focus (page, canvas, strip) so a stray key on a slider never drops a photo; while a
+      // section edits on the photo (blur boxes, layers) the key belongs to the selected layer, never the photo
       const t = e.target;
-      if (!state.activeId || !(t === document.body || t.closest?.('.thumbs, .compare-btn'))) return;
+      const action = deleteKeyAction({
+        hasPhoto: Boolean(state.activeId),
+        target: { body: t === document.body || Boolean(t.closest?.('.compare-btn')), inStrip: Boolean(t.closest?.('.thumbs')) },
+        editing: { active: editing.active, selected: editing.selected, removable: state.tool === 'blur' || state.tool === 'editor' },
+      });
+      if (!action) return;
       e.preventDefault();
-      removeFile(state.activeId, { undo: true });
+      if (action === 'layer') editing.remove(editing.selected);
+      else removeFile(state.activeId, { undo: true });
     } else if (e.key === '[' || e.key === ']') {
       e.preventDefault();
       stepFile(e.key === ']' ? 1 : -1);
@@ -1185,6 +1368,524 @@ function initKeyboard() {
   b.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
+// ── v2: files, editing layer, detection, upscale check, jobs, continue, hosted copy ──────────────────────
+
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+/** A photo in the strip (upload or job result). */
+function fileRecord(info) {
+  return {
+    id: info.id, name: info.name, info, crop: null, preview: null, previewKey: null, previewFraming: null, previewError: null,
+    cropBase: null, cropBasePending: null, passportBase: null, passportBasePending: null, full: null, regions: [], items: [],
+  };
+}
+
+const isImageInfo = (info) => !info?.kind || info.kind === 'image';
+
+/** The shown preview is the render of exactly the current settings. */
+function previewFresh(f) {
+  return Boolean(f && !previewPending && !f.previewError && f.previewKey === JSON.stringify(previewRequest(f)));
+}
+
+/** Point the editing layer at the active photo for the open section (after the picture is laid out). */
+function syncEditing(f, settled) {
+  if (!f || comparing || cropBoxMode() || f !== activeFile()) {
+    editing.update({ tool: null });
+    return;
+  }
+  editing.update({ tool: EDIT_STAGE[state.tool] ? state.tool : null, file: f, settled });
+}
+
+const STAGE_BADGE = { blur: 'Before rotate & crop', watermark: 'Before the sheet layout', meme: 'Before later edits', editor: 'Before later edits', upscale: 'Before later edits' };
+
+/**
+ * Sections that draw on the picture: when later edits move the frame, show the image entering the section's
+ * stage instead of the finished preview, so boxes and layers line up. Returns true when it took over the canvas.
+ */
+function renderStageBase(f) {
+  const stage = EDIT_STAGE[state.tool];
+  if (!stage) return false;
+  const ops = stageBaseOps(f, stage);
+  if (!ops) return false;
+  canvas.setGuides(null);
+  canvas.setBadge(STAGE_BADGE[state.tool] || 'Before later edits');
+  const base = opsBase(f, `${stage}Base`, ops);
+  if (!base) {
+    editing.update({ tool: null });
+    const p = f.preview;
+    canvas.show(p?.image || api.previewUrl(f.id), p ? { w: p.width, h: p.height } : infoDims(f), f.name);
+    return true;
+  }
+  canvas.show(base.src, { w: base.w, h: base.h }, `${f.name}, before later edits`).then(() => {
+    if (canvas.src === base.src && activeFile() === f && !comparing) syncEditing(f, false);
+  });
+  return true;
+}
+
+function exportBusyText(files) {
+  if (hasHeavyOps(files)) return files.length > 1 ? `Upscaling ${files.length} photos… this takes a while` : 'Upscaling… this can take a minute';
+  if (hasJobOps(files)) return files.length > 1 ? `Working on ${files.length} photos… this takes a while` : 'Removing the background…';
+  return files.length > 1 ? `Exporting ${files.length} photos…` : 'Exporting…';
+}
+
+// ── sections index (help dialog) ─────────────────────────────────────────────
+
+function buildSectionIndex() {
+  const dlg = el.help;
+  let list = dlg.querySelector('.section-index');
+  if (!list) {
+    list = h('ol', { class: 'section-index', 'aria-label': 'Every section' });
+    dlg.append(h('div', { class: 'section-index-wrap' }, h('h3', { class: 'group-title' }, 'Every section'), list));
+  }
+  list.replaceChildren(...TOOLS.map((t, i) => h('li', {},
+    h('button', {
+      type: 'button', class: 'section-link', onclick: () => { dlg.close(); setTool(t.id); },
+    }, h('span', { class: 'section-no' }, String(i + 1).padStart(2, '0')), h('span', { class: 'section-name' }, t.title),
+    i < SHORTCUTS ? h('kbd', {}, String(i + 1)) : null))));
+}
+
+// ── editor catalogue (filters, frames, stickers from the server) ─────────────
+
+function editorCatalog() {
+  const cat = state.catalog;
+  const ids = (list) => (Array.isArray(list) ? list.map((x) => x?.id).filter((x) => typeof x === 'string') : null);
+  const fIds = ids(cat?.filters);
+  const frIds = ids(cat?.frames);
+  const stickers = (Array.isArray(cat?.stickers) ? cat.stickers : [])
+    .filter((s) => typeof s?.id === 'string' && /^[\w-]+(\/[\w-]+)*$/.test(s.id))
+    .map((s) => ({ ...s, name: String(s.name || s.id), url: stickerUrl(s.id) }));
+  return {
+    filters: fIds ? adoptEnums(FILTERS, ['none', ...fIds.filter((x) => x !== 'none')]) : FILTERS,
+    frames: frIds ? adoptEnums(FRAMES, ['none', ...frIds.filter((x) => x !== 'none')]) : FRAMES,
+    stickers,
+    stickersLoading: cat === undefined,
+    stickerCredit: stickers.some((s) => s.source === 'openmoji') ? 'Emoji stickers by OpenMoji (CC BY-SA 4.0) — see Credits.' : '',
+  };
+}
+
+/** Same-origin URL of a bundled sticker's SVG (catalogue `url` when the server gives one). */
+function stickerUrl(id) {
+  const s = Array.isArray(state.catalog?.stickers) ? state.catalog.stickers.find((x) => x?.id === id) : null;
+  if (typeof s?.url === 'string' && /^\/[^\s"'<>]*$/.test(s.url)) return s.url;
+  return `/api/assets/stickers/${String(id).split('/').map(encodeURIComponent).join('/')}.svg`;
+}
+
+// ── side files (watermark logo): uploaded, never in the strip ───────────────
+
+const auxFiles = new Set();
+const LOGO_TYPES = /^image\/(png|webp|svg\+xml|jpeg|gif|avif)$/;
+
+async function uploadAux(file) {
+  if (!file) return null;
+  if (file.type && !LOGO_TYPES.test(file.type)) {
+    toast('Choose a PNG, SVG, WebP, JPG, GIF or AVIF image for the logo.', 'error');
+    return null;
+  }
+  const max = state.limits?.max_upload_mb > 0 ? state.limits.max_upload_mb : 25;
+  if (file.size > Math.min(max, 25) * 1024 * 1024) {
+    toast(`That logo is too large (max ${Math.min(max, 25)} MB).`, 'error');
+    return null;
+  }
+  try {
+    const res = await api.upload([file], null, { accept: 'image' });
+    const info = res.files[0];
+    if (!info) {
+      toast(`Couldn’t use “${file.name}”: ${res.errors[0]?.detail || 'unsupported file'}`, 'error');
+      return null;
+    }
+    auxFiles.add(info.id);
+    return info;
+  } catch (e) {
+    toast(e?.detail || 'Upload failed', 'error');
+    return null;
+  }
+}
+
+function dropAux(id) {
+  if (!id || !auxFiles.has(id)) return;
+  auxFiles.delete(id);
+  api.deleteFile(id);
+}
+
+function auxExpired(kind) {
+  if (kind !== 'watermark' || !state.watermark.imageId) return;
+  auxFiles.delete(state.watermark.imageId);
+  Object.assign(state.watermark, { imageId: null, imageName: '', imageW: 0, imageH: 0 });
+  toast('The watermark logo is no longer on the server. Choose it again.', 'warn');
+  changed({ panel: true });
+}
+
+/** A blank canvas (meme without a photo) is made here and added like any other picture. */
+function newBlank(c, color = '#ffffff') {
+  const cv = document.createElement('canvas');
+  cv.width = c.w;
+  cv.height = c.h;
+  const g = cv.getContext('2d');
+  g.fillStyle = color;
+  g.fillRect(0, 0, c.w, c.h);
+  cv.toBlob((b) => {
+    if (b) addFiles([new File([b], `blank-${c.id}.png`, { type: 'image/png' })]);
+    else toast('Couldn’t make a blank canvas in this browser.', 'error');
+  }, 'image/png');
+}
+
+// ── blur: detection ─────────────────────────────────────────────────────────
+
+let detectBusy = null;
+
+async function detect({ what, all = false }) {
+  const kinds = (what || []).filter((k) => k === 'faces' || k === 'plates');
+  if (detectBusy || !kinds.length) return;
+  const files = all ? state.files.slice() : [activeFile()].filter(Boolean);
+  if (!files.length) return;
+  detectBusy = kinds.length > 1 ? 'both' : kinds[0];
+  refreshPanel();
+  const found = { face: 0, plate: 0 };
+  const gone = [];
+  const missing = new Set();
+  let failed = null;
+  try {
+    for (const f of files) {
+      try {
+        let res = null;
+        for (let attempt = 0; !res; attempt++) {
+          try {
+            res = await api.detect(f.id, kinds);
+          } catch (e) {
+            if (e?.status === 503 && e.retryAfter && attempt < 2) {
+              await sleep(Math.min(10, e.retryAfter) * 1000);
+              continue;
+            }
+            throw e;
+          }
+        }
+        for (const u of res.unavailable || []) missing.add(u);
+        const { list, added } = mergeRegions(f.regions, normalizeDetections(res, infoDims(f)), () => newId('r'));
+        f.regions = list;
+        for (const r of list.slice(list.length - added)) found[r.source] = (found[r.source] || 0) + 1;
+      } catch (e) {
+        if (e?.status === 404) gone.push(f);
+        else failed = e;
+      }
+    }
+  } finally {
+    detectBusy = null;
+  }
+  if (gone.length) expire(gone);
+  changed({ panel: true });
+  const parts = [];
+  if (kinds.includes('faces')) parts.push(`${found.face} face${found.face === 1 ? '' : 's'}`);
+  if (kinds.includes('plates')) parts.push(`${found.plate} plate${found.plate === 1 ? '' : 's'}`);
+  if (failed) toast(`Detection failed: ${failed.detail || 'unknown error'}`, 'error');
+  else if (missing.size) toast(`${[...missing].map((m) => (m === 'faces' ? 'Face' : 'Plate')).join(' and ')} detection isn’t installed on this server.`, 'warn');
+  else toast(found.face + found.plate ? `Found ${parts.join(' and ')}${all ? ` in ${files.length} photos` : ''}. Untick any you want to keep visible.` : `No new ${parts.map((p) => p.replace(/^\d+ /, '')).join(' or ')} found — draw a box over anything else.`);
+}
+
+// ── editor layers ───────────────────────────────────────────────────────────
+
+const TAB_OF = { text: 'text', sticker: 'stickers', shape: 'shapes', brush: 'brush' };
+
+function selectItem(id, { tab = false } = {}) {
+  const f = activeFile();
+  if (!f) return;
+  const it = (f.items || []).find((x) => x.id === id) || (f.regions || []).find((x) => x.id === id);
+  if (!it) return;
+  editing.selected = id;
+  if (tab && state.tool === 'editor' && TAB_OF[it.kind] && state.editor.tab !== TAB_OF[it.kind]) state.editor.tab = TAB_OF[it.kind];
+  changed({ panel: true, preview: false });
+  editing.select(id, { focus: true });
+}
+
+function addItem(item, { focusText = false } = {}) {
+  const f = activeFile();
+  if (!f) return;
+  f.items ||= [];
+  if (f.items.length >= 100) {
+    toast('At most 100 layers per photo.', 'warn');
+    return;
+  }
+  const id = newId('o');
+  const ratio = item.kind === 'sticker' ? (item.ratio || 1) : undefined;
+  f.items.push({ cx: 0.5, cy: 0.5, w: 0.2, h: 0.1, rotation: 0, opacity: 1, ...item, ...(ratio ? { ratio } : {}), id });
+  editing.selected = id;
+  changed({ panel: true });
+  if (focusText) requestAnimationFrame(() => editorTool.focusText());
+}
+
+function moveItem(id, dir) {
+  const f = activeFile();
+  const list = f?.items || [];
+  const i = list.findIndex((x) => x.id === id);
+  const j = i + (dir > 0 ? 1 : -1);
+  if (i < 0 || j < 0 || j >= list.length) return;
+  [list[i], list[j]] = [list[j], list[i]];
+  changed({ panel: true });
+}
+
+function moveFileTo(id, index) {
+  const i = state.files.findIndex((f) => f.id === id);
+  if (i < 0) return;
+  const to = clamp(index, 0, state.files.length - 1);
+  if (to === i) return;
+  const [f] = state.files.splice(i, 1);
+  state.files.splice(to, 0, f);
+  changed({ panel: true, preview: false });
+}
+
+// ── upscale: input size and the detail check ────────────────────────────────
+
+function upscaleInput() {
+  const f = activeFile();
+  if (!f) return null;
+  const ops = stageBaseOps(f, 'upscale');
+  if (ops) {
+    const b = opsBase(f, 'upscaleBase', ops);
+    return b ? { w: b.w, h: b.h } : null;
+  }
+  const p = f.preview;
+  if (p?.width && p?.height) return { w: p.width, h: p.height };
+  return buildOps(f, { preview: true }).length ? null : infoDims(f);
+}
+
+const loupe = { key: null, src: null, error: null, pending: false, ctrl: null, timer: 0 };
+
+/** Before/after of the detail square: the browser's enlargement vs. the model's, rendered by the server. */
+function loupeView() {
+  const f = activeFile();
+  const dims = upscaleInput();
+  if (!f || !dims || !(state.upscale.factor > 1) || passportActive()) return null;
+  const region = loupeRegion(state.upscale.loupe, dims.w, dims.h);
+  const ops = stageBaseOps(f, 'upscale');
+  const base = ops ? opsBase(f, 'upscaleBase', ops) : null;
+  const beforeSrc = base?.src || f.preview?.image || api.previewUrl(f.id);
+  const pre = buildOps(f, { until: 'upscale', preview: true });
+  const req = {
+    ids: [f.id],
+    ops: [...pre, { op: 'crop', unit: 'fraction', x: region.x, y: region.y, width: region.w, height: region.h },
+      { op: 'upscale', factor: state.upscale.factor, model: state.upscale.model }],
+    output: { format: 'png', strip_metadata: true },
+  };
+  const key = JSON.stringify(req);
+  if (key !== loupe.key) {
+    loupe.key = key;
+    loupe.src = null;
+    loupe.error = null;
+    loupe.pending = true;
+    clearTimeout(loupe.timer);
+    loupe.ctrl?.abort();
+    loupe.timer = setTimeout(() => fetchLoupe(req, key), 450);
+  }
+  return { region, beforeSrc, afterSrc: loupe.src, pending: loupe.pending, error: loupe.error };
+}
+
+async function fetchLoupe(req, key) {
+  loupe.ctrl = new AbortController();
+  try {
+    const res = await api.preview(req, loupe.ctrl.signal, 800);
+    if (loupe.key !== key) return;
+    loupe.src = res.image;
+  } catch (e) {
+    if (e?.name === 'AbortError' || loupe.key !== key) return;
+    loupe.error = e?.detail || 'unknown error';
+  }
+  loupe.pending = false;
+  if (state.tool === 'upscale') syncPanel();
+}
+
+// ── jobs (Make GIF, HTML → image) and their results ─────────────────────────
+
+function runTool(key, toolId, ids, options, { addToStrip = false, exec = null } = {}) {
+  const title = TOOLS.find((t) => t.id === key)?.title || 'The job';
+  const run = exec || (({ signal, onQueued, onProgress }) => jobs.run({ tool: toolId, file_ids: ids, options }, { signal, onQueued, onProgress }));
+  startRun(key, (ctl) => run(ctl).then((res) => { trackResults(res); return res; }))
+    .then(async (res) => {
+      if (!res) {
+        const e = getRun(key).error;
+        if (e?.status === 404 && ids.length) {
+          const gone = [];
+          await Promise.all(state.files.filter((f) => ids.includes(f.id)).map((f) => api.fileInfo(f.id).catch((err) => { if (err?.status === 404) gone.push(f); })));
+          if (gone.length) expire(gone);
+        }
+        if (e && state.tool !== key) toast(`${title} failed: ${e.detail || 'unknown error'}`, 'error');
+        return;
+      }
+      if (res.warnings?.length) toast(warningSummary(res.warnings), 'warn', { timeout: 10000 });
+      const files = (res.files || []).filter(isImageInfo);
+      if (addToStrip && files.length) addResultFiles(files, { select: true });
+      else if (state.tool !== key) toast(`${title} is ready.`, 'info', { action: { label: 'Open', onClick: () => setTool(key) } });
+    });
+}
+
+/**
+ * Make GIF (UIH-04): unless switched off, frames get the other sections' edits first — the img.process job renders
+ * them (PNG), the GIF is made from those renders, and the renders are deleted again. Without edits (or without
+ * img.process) the frames are the photos as uploaded.
+ */
+function makeGif(frames, options) {
+  const ids = frames.map((f) => f.id);
+  if (!gifAppliesEdits(frames)) {
+    runTool('gif', GIF_TOOL, ids, options);
+    return;
+  }
+  runTool('gif', GIF_TOOL, ids, options, {
+    exec: async ({ signal, onQueued, onProgress }) => {
+      const req = exportRequest(frames);
+      req.output = { ...req.output, format: 'png', max_kb: null, min_kb: null, filename: null, combine_pdf: false };
+      const baked = await jobs.run({ tool: PROCESS_TOOL, file_ids: req.ids, options: processOptions(req) }, {
+        signal, onQueued, onProgress: (p) => onProgress(Math.min(1, p) * 0.6, 'Applying your edits to the frames'),
+      });
+      const tmp = (baked.files || []).map((f) => f.id);
+      try {
+        if (tmp.length !== ids.length) throw new Error('Some frames could not be prepared');
+        const res = await jobs.run({ tool: GIF_TOOL, file_ids: tmp, options }, {
+          signal, onQueued, onProgress: (p, msg) => onProgress(0.6 + Math.min(1, p) * 0.4, msg),
+        });
+        return { ...res, warnings: [...new Set([...(baked.warnings || []), ...(res.warnings || [])])] };
+      } finally {
+        for (const id of tmp) api.deleteFile(id); // intermediate renders: only the GIF is kept
+      }
+    },
+  });
+}
+
+/** Whether Make GIF will apply the other sections' edits to these frames. */
+function gifAppliesEdits(frames) {
+  return state.gif.applyEdits !== false && Boolean(processTool()) && frames.some((f) => buildOps(f).length > 0);
+}
+
+/** Put job results into the strip so every section can work on them. */
+function addResultFiles(infos, { select = true } = {}) {
+  const fresh = infos.filter((i) => isImageInfo(i) && !state.files.some((f) => f.id === i.id));
+  for (const info of fresh) state.files.push(fileRecord(info));
+  if (select && infos[0]) {
+    state.activeId = null;
+    selectFile(infos[0].id);
+  }
+  changed({ panel: true });
+  return fresh.length;
+}
+
+/** heyp sections that take `kind` results (Make GIF needs at least two frames). */
+function continueSections(kind) {
+  if (kind !== 'image') return [];
+  return TOOLS.filter((t) => HEYP_CONTINUE.includes(t.id))
+    .map((t) => ({ id: t.id, title: t.title, accepts: (k, n) => k === 'image' && (t.id !== 'gif' || n >= 2) }));
+}
+
+function resultTargets(files, exclude) {
+  const first = files[0] || {};
+  const fmt = String(first.format || first.name?.split('.').pop() || '').toLowerCase();
+  const kind = first.kind || (fmt === 'pdf' ? 'pdf' : 'image');
+  return continueTargets({ kind, count: files.length },
+    { heypSections: continueSections(kind), exclude, sibling: siblingUrl(state.config) });
+}
+
+function resultView(res, { source } = {}) {
+  const files = res.files || [];
+  if (!files.length) return h('p', { class: 'hint' }, 'The job finished without a file.');
+  const list = h('div', { class: 'job-results' }, files.slice(0, 12).map((info) => resultFile(info)));
+  const more = files.length > 12 ? h('p', { class: 'hint' }, `…and ${files.length - 12} more in the ZIP.`) : null;
+  const actions = h('div', { class: 'btn-row job-actions' });
+  if (res.zip?.id) {
+    actions.append(h('a', { class: 'btn btn-icon-text', href: api.downloadUrl(res.zip.id), download: res.zip.name || '' }, icon('download', 16), h('span', {}, `All ${files.length} · ZIP`)));
+  }
+  const images = files.filter(isImageInfo);
+  if (images.length && !images.every((i) => state.files.some((f) => f.id === i.id))) {
+    actions.append(h('button', { type: 'button', class: 'btn btn-icon-text', onclick: () => { const n = addResultFiles(images); if (n) toast(`Added ${n} to your photos.`); } }, icon('plus', 16), h('span', {}, 'Add to photos')));
+  }
+  const menu = continueMenu({ targets: resultTargets(files, source), onPick: (t) => continueWith(t, files) });
+  if (menu) actions.append(menu);
+  return h('div', { class: 'job-result' }, h('p', { class: 'group-title' }, files.length > 1 ? `Results · ${files.length}` : 'Result'), list, more, actions);
+}
+
+/** "Continue with" a heyp section: it works on the files in the strip (job results are added to it first). */
+function continueWith(t, files) {
+  if (files) addResultFiles(files);
+  setTool(t.id);
+}
+
+// export → continue: heyp sections switch in place, with the same photos and edits
+let continueKey = '';
+
+function syncContinue() {
+  const box = exportUi.cont;
+  if (!box) return;
+  const n = state.files.length;
+  const fmt = state.output.format === 'original' ? (activeFile()?.info?.format || 'jpeg') : state.output.format;
+  const combined = fmt === 'pdf' && state.output.combinePdf && n > 1;
+  const out = outputKind(fmt);
+  const sibling = siblingUrl(state.config);
+  const key = JSON.stringify([n, fmt, combined, Boolean(exportUi.done), sibling, state.tool]);
+  if (key === continueKey) return;
+  continueKey = key;
+  if (!n || !exportUi.done) {
+    box.replaceChildren();
+    return;
+  }
+  const targets = continueTargets({ kind: out.kind, count: combined ? 1 : n },
+    { heypSections: continueSections(out.kind), exclude: state.tool, sibling });
+  // heyp sections keep editing the same photos with the same edits (Make GIF applies them to its frames)
+  const menu = continueMenu({ targets, up: true, onPick: (t) => continueWith(t) });
+  box.replaceChildren(...(menu ? [menu] : []));
+}
+
+// ── v2 boot: config (hosted copy), registry, editor catalogue ────
+
+function applyCopy(c) {
+  document.body.classList.remove('copy-pending', 'copy-unknown');
+  document.body.classList.toggle('is-hosted', c.mode === 'hosted');
+  const pill = $('.local-pill');
+  if (pill) {
+    pill.textContent = c.pill;
+    pill.title = c.pillTitle;
+  }
+  // the dateline's one factual line (how long files are kept), from the configured TTLs
+  const edition = $('.dateline-edition');
+  if (edition) edition.textContent = c.dateline;
+  // the "heyp · heypdf" switch: a plain link to the sibling site when this deployment names one
+  const sibling = siblingUrl(state.config);
+  const link = $('.sibling-link[data-app="heypdf"]');
+  if (link && sibling) link.href = sibling;
+  for (const node of document.querySelectorAll('.sibling-dot, .sibling-link[data-app="heypdf"]')) node.hidden = !sibling;
+  const lede = $('.dz-lede');
+  if (lede) lede.textContent = c.lede;
+  // the policy pages open in a new tab: leaving this page deletes the photos it holds (UIH-08)
+  const doc = (href, label) => h('a', { href, target: '_blank', rel: 'noopener' }, label);
+  const priv = $('.dz-privacy');
+  if (priv) {
+    // one run of text (the line is a flex row: the shield, then the words)
+    priv.replaceChildren(icon('shield', 15), h('span', {}, `${c.privacy}. `,
+      ...(c.privacyNote ? [`${c.privacyNote} `, doc('/terms', 'Terms'), ' and ', doc('/privacy', 'Privacy policy'), '.']
+        : [doc('/privacy', 'Privacy')])));
+  }
+  const foot = $('#colophon-links');
+  if (foot) foot.replaceChildren(...c.footer.map((l) => doc(l.href, l.label)));
+  const ver = $('#colophon-version');
+  if (ver) ver.textContent = c.version ? `v${c.version}` : '';
+  const op = $('#colophon-operator');
+  const name = state.config?.operator?.name;
+  if (op) op.textContent = c.mode === 'hosted' && typeof name === 'string' && name.length < 120 ? `Run by ${name}` : '';
+}
+
+async function loadV2() {
+  const [cfg, tools, cat] = await Promise.allSettled([api.config(), api.tools(), api.editorCatalog()]);
+  state.config = cfg.status === 'fulfilled' && cfg.value && typeof cfg.value === 'object' ? cfg.value : null;
+  if (state.config?.features && typeof state.config.features === 'object') {
+    for (const [k, v] of Object.entries(state.config.features)) if (typeof v === 'boolean') state.features[k] = v;
+  }
+  if (cfg.status === 'rejected' && cfg.reason?.status !== 404) {
+    // couldn't ask (offline, server error): make no claim either way rather than risk a false "Local only"
+    document.body.classList.remove('copy-pending');
+    document.body.classList.add('copy-unknown');
+  } else {
+    applyCopy(copyFor(state.config)); // 404 = a server older than /api/config, which is always self-hosted
+  }
+  state.tools = tools.status === 'fulfilled' && Array.isArray(tools.value?.tools) ? tools.value.tools : [];
+  state.catalog = cat.status === 'fulfilled' && cat.value && typeof cat.value === 'object' ? cat.value : null;
+  refreshPanel();
+  changed({ preview: false });
+}
+
 // ── boot ────────────────────────────────────────────────────────────────────
 
 function decorate() {
@@ -1216,17 +1917,22 @@ function boot() {
   changed({ preview: false });
   loadCapabilities();
   loadPresets();
-  // leaving deletes every upload (below), so warn first when crops or edits would be lost
+  loadV2();
+  // a text font that finished loading changes measured caption / watermark sizes: lay the layer out again
+  document.fonts?.addEventListener?.('loadingdone', () => editing.refresh());
+  // leaving deletes every upload (below), so any navigation away with photos asks first (UIH-08)
   window.addEventListener('beforeunload', (e) => {
-    if (!state.files.length || !(state.files.some((f) => f.crop) || describeEdits(activeFile()).length)) return;
+    if (!state.files.length) return;
     e.preventDefault();
     e.returnValue = '';
   });
-  // privacy: when the tab really goes away, delete this session's uploads right away (TTL is the fallback)
+  // privacy: when the tab really goes away, delete this page's uploads and job results right away (TTL is the fallback)
   window.addEventListener('pagehide', (e) => {
     if (e.persisted) return;
     removals.flush({ keepalive: true });
     for (const f of state.files) api.deleteFile(f.id, { keepalive: true });
+    for (const id of auxFiles) api.deleteFile(id, { keepalive: true });
+    for (const id of resultFiles) if (!state.files.some((f) => f.id === id)) api.deleteFile(id, { keepalive: true });
   });
 }
 

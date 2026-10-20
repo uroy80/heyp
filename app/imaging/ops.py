@@ -14,7 +14,8 @@ import numpy as np
 from PIL import Image, ImageChops, ImageColor, ImageEnhance, ImageOps
 
 __all__ = [
-    "parse_color", "parse_ratio", "rotate", "flip", "crop", "crop_aspect", "trim", "resize", "pad",
+    "parse_color", "parse_ratio", "rotate", "flip", "crop", "crop_aspect", "crop_aspect_box", "trim", "trim_box",
+    "resize", "pad",
     "adjust", "smart_box", "to_px", "RESIZE_MODES", "UNITS", "RESAMPLE",
 ]
 
@@ -215,12 +216,9 @@ def _face_box(face: Any) -> tuple[float, float, float, float] | None:
     return fx, fy, fw, fh
 
 
-def crop_aspect(img: Image.Image, ratio: Any, anchor: str = "center", faces: Iterable[Any] | None = None) -> Image.Image:
-    """Largest crop with ``ratio`` (w/h), positioned by ``anchor``: center | smart | face.
-
-    ``faces`` are objects or dicts with ``box = (x, y, w, h)``; the largest one is centred.
-    Without usable faces the ``face`` anchor falls back to ``smart``.
-    """
+def crop_aspect_box(img: Image.Image, ratio: Any, anchor: str = "center",
+                    faces: Iterable[Any] | None = None) -> tuple[int, int, int, int]:
+    """The (left, top, right, bottom) window :func:`crop_aspect` cuts (animations reuse it per frame)."""
     value = parse_ratio(ratio)
     if anchor not in ("center", "smart", "face"):
         raise ValueError(f"Invalid anchor {anchor!r} (use 'center', 'smart' or 'face')")
@@ -230,7 +228,7 @@ def crop_aspect(img: Image.Image, ratio: Any, anchor: str = "center", faces: Ite
     else:
         w, h = W, min(H, max(1, int(round(W / value))))
     if (w, h) == (W, H):
-        return img.copy()
+        return 0, 0, W, H
     x, y = (W - w) // 2, (H - h) // 2
     if anchor == "face":
         boxes = [b for b in (_face_box(f) for f in (faces or [])) if b is not None]
@@ -243,7 +241,19 @@ def crop_aspect(img: Image.Image, ratio: Any, anchor: str = "center", faces: Ite
             anchor = "smart"
     if anchor == "smart":
         x, y = smart_box(img, w, h)
-    return img.crop((x, y, x + w, y + h))
+    return x, y, x + w, y + h
+
+
+def crop_aspect(img: Image.Image, ratio: Any, anchor: str = "center", faces: Iterable[Any] | None = None) -> Image.Image:
+    """Largest crop with ``ratio`` (w/h), positioned by ``anchor``: center | smart | face.
+
+    ``faces`` are objects or dicts with ``box = (x, y, w, h)``; the largest one is centred.
+    Without usable faces the ``face`` anchor falls back to ``smart``.
+    """
+    box = crop_aspect_box(img, ratio, anchor, faces)
+    if box == (0, 0, img.width, img.height):
+        return img.copy()
+    return img.crop(box)
 
 
 def _corner_background(samples: list[tuple[int, ...]], tolerance: int, has_alpha: bool) -> tuple[int, ...]:
@@ -257,13 +267,18 @@ def _corner_background(samples: list[tuple[int, ...]], tolerance: int, has_alpha
     return samples[counts.index(max(counts))]
 
 
-def trim(img: Image.Image, tolerance: int = 12, padding: int = 0) -> Image.Image:
-    """Auto-crop uniform borders whose colour is sampled from the corners (alpha = 0 is border too)."""
+def _trim_args(tolerance: Any, padding: Any) -> tuple[int, int]:
     if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) or not 0 <= tolerance <= 255:
         raise ValueError("tolerance must be between 0 and 255")
     if isinstance(padding, bool) or not isinstance(padding, (int, float)) or padding < 0:
         raise ValueError("padding must be 0 or more pixels")
-    tolerance, padding = int(tolerance), int(padding)
+    return int(tolerance), int(padding)
+
+
+def trim_box(img: Image.Image, tolerance: int = 12) -> tuple[int, int, int, int] | None:
+    """Bounding box of the content :func:`trim` keeps (border colour sampled from the corners);
+    None for a uniform image."""
+    tolerance, _ = _trim_args(tolerance, 0)
     if img.mode not in ("RGB", "RGBA", "L", "LA"):
         img = img.convert("RGBA" if "A" in img.getbands() or "transparency" in img.info else "RGB")
     W, H = img.size
@@ -289,7 +304,16 @@ def trim(img: Image.Image, tolerance: int = 12, padding: int = 0) -> Image.Image
             content = mask if content is None else ImageChops.lighter(content, mask)
         if alpha is not None:
             content = ImageChops.darker(content, alpha.point(opaque_lut))
-    bbox = content.getbbox()
+    return content.getbbox()
+
+
+def trim(img: Image.Image, tolerance: int = 12, padding: int = 0) -> Image.Image:
+    """Auto-crop uniform borders whose colour is sampled from the corners (alpha = 0 is border too)."""
+    tolerance, padding = _trim_args(tolerance, padding)
+    if img.mode not in ("RGB", "RGBA", "L", "LA"):
+        img = img.convert("RGBA" if "A" in img.getbands() or "transparency" in img.info else "RGB")
+    W, H = img.size
+    bbox = trim_box(img, tolerance)
     if bbox is None:  # uniform image: nothing sensible to trim
         return img.copy()
     left, top, right, bottom = bbox
