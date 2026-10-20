@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="heyp is a private photo toolbox: convert HEIC to JPG or PNG, resize, crop, compress and make passport photos — on your own machine.">
+  <meta name="referrer" content="no-referrer">
+  <title>heyp · photo toolbox</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="/fonts/fraunces-latin-opsz-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/libre-franklin-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/js/theme.js"></script>
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#tool-panel">Skip to tool options</a>
+
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="heyp — start over">
+      <svg class="brand-mark" viewBox="0 0 32 32" width="24" height="24" aria-hidden="true" focusable="false">
+        <rect x="2" y="2" width="28" height="28" rx="8" fill="currentColor"/>
+        <circle class="mark-fg" cx="21" cy="11.5" r="3"/>
+        <path class="mark-fg" d="M7 24.5 13.2 16a1.2 1.2 0 0 1 1.94 0L19 21.3l1.6-2a1.2 1.2 0 0 1 1.88 0L26 23.8v.7H7Z"/>
+      </svg>
+      <span class="wordmark">heyp</span>
+    </a>
+    <div class="topbar-actions">
+      <span class="local-pill" title="Everything runs in your heyp container. Nothing is uploaded to the internet.">Local only</span>
+      <button type="button" class="btn btn-ghost add-btn" id="add-btn">
+        <span class="add-icon" aria-hidden="true"></span><span class="add-label">Add photos</span>
+      </button>
+      <button type="button" class="icon-btn" id="help-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" aria-haspopup="dialog"></button>
+      <button type="button" class="icon-btn" id="theme-btn" aria-label="Toggle theme"></button>
+    </div>
+    <p class="dateline" aria-hidden="true"><span class="dateline-edition"></span><span class="dateline-mid">Files stay on this machine — nothing is uploaded</span><time class="dateline-date" id="dateline-date"></time></p>
+  </header>
+
+  <main class="app" id="app">
+    <nav class="rail" aria-label="Tools">
+      <ul class="rail-list" id="tool-list"></ul>
+    </nav>
+
+    <section class="work" aria-label="Preview">
+      <div class="canvas" id="canvas" aria-busy="false">
+        <div class="dropzone" id="dropzone">
+          <div class="dz-inner">
+            <div class="dz-icon" aria-hidden="true"></div>
+            <p class="dz-kicker">Today’s edition · No photos yet</p>
+            <h1 class="dz-title">Drop photos here</h1>
+            <p class="dz-lede">Convert iPhone HEIC to JPG, resize, crop, compress and make passport photos — on this machine, never the internet.</p>
+            <p class="dz-sub">
+              <button type="button" class="btn btn-primary" id="dz-pick">Choose photos</button>
+              <span class="dz-or">or paste with <kbd class="kbd-mod">Ctrl</kbd>&thinsp;<kbd>V</kbd></span>
+            </p>
+            <p class="dz-formats">HEIC · JPG · PNG · WebP · AVIF · TIFF · BMP · GIF · ICO · JPEG&nbsp;2000</p>
+            <p class="dz-privacy"><span class="dz-shield" aria-hidden="true"></span>Files stay on this machine</p>
+          </div>
+        </div>
+        <div class="stage" id="stage"></div>
+        <div class="loadbar" aria-hidden="true"></div>
+        <p class="canvas-badge" id="canvas-badge" hidden></p>
+        <button type="button" class="canvas-btn compare-btn" id="compare-btn" title="Hold to see the original (or hold Space)">
+          <span class="compare-icon" aria-hidden="true"></span><span class="compare-label">Hold to compare</span>
+        </button>
+      </div>
+
+      <div class="below">
+        <div class="status" id="status" role="status" aria-live="polite"></div>
+        <ul class="chips" id="chips" aria-label="Active edits"></ul>
+        <ul class="warnings" id="warnings" aria-live="polite"></ul>
+      </div>
+
+      <div class="strip" id="strip">
+        <div class="upload-bar" id="upload-bar" hidden>
+          <span class="upload-text" id="upload-text" aria-live="polite"></span>
+          <span class="upload-track"><span class="upload-fill" id="upload-fill"></span></span>
+        </div>
+        <ul class="thumbs" id="thumbs" aria-label="Files"></ul>
+      </div>
+    </section>
+
+    <aside class="panel" aria-label="Options">
+      <div class="panel-body" id="tool-panel" role="region" tabindex="-1"></div>
+      <section class="export" id="export" aria-labelledby="export-title"></section>
+    </aside>
+  </main>
+
+  <input type="file" id="file-input" multiple hidden
+         accept="image/*,.heic,.heif,.hif,.avif,.webp,.tif,.tiff,.bmp,.gif,.ico,.jp2,.j2k,.jpf,.jpx">
+
+  <div class="dropveil" id="dropveil" hidden aria-hidden="true">
+    <div class="dropveil-inner">Drop to add photos</div>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+
+  <dialog class="dialog" id="help-dialog" aria-labelledby="help-title">
+    <div class="dialog-head">
+      <h2 id="help-title">Keyboard shortcuts</h2>
+      <button type="button" class="icon-btn" id="help-close" aria-label="Close"></button>
+    </div>
+    <dl class="shortcuts">
+      <div><dt><kbd>1</kbd>–<kbd>8</kbd></dt><dd>Switch tool</dd></div>
+      <div><dt>Hold <kbd>Space</kbd></dt><dd>Show the original</dd></div>
+      <div><dt><kbd>R</kbd> / <kbd>Shift</kbd> <kbd>R</kbd></dt><dd>Rotate right / left</dd></div>
+      <div><dt><kbd class="kbd-mod">Ctrl</kbd> <kbd>S</kbd></dt><dd>Download</dd></div>
+      <div><dt><kbd class="kbd-mod">Ctrl</kbd> <kbd>O</kbd></dt><dd>Add photos</dd></div>
+      <div><dt><kbd class="kbd-mod">Ctrl</kbd> <kbd>V</kbd></dt><dd>Paste an image</dd></div>
+      <div><dt><kbd>[</kbd> / <kbd>]</kbd></dt><dd>Previous / next photo</dd></div>
+      <div><dt><kbd>Del</kbd></dt><dd>Remove the current photo</dd></div>
+      <div><dt><kbd>Esc</kbd></dt><dd>Revert crop changes</dd></div>
+      <div><dt>Arrows</dt><dd>Nudge the crop box (<kbd>Shift</kbd> ×10, <kbd>Alt</kbd> resizes)</dd></div>
+    </dl>
+  </dialog>
+
+  <noscript><p class="noscript">heyp needs JavaScript to run.</p></noscript>
+</body>
+</html>

@@ -1,0 +1,37 @@
+services:
+  heyp:
+    build:
+      context: .
+      target: runtime
+    image: heyp:latest
+    container_name: heyp
+    ports:
+      # Loopback only by default: heyp has no authentication. To reach it from other devices on a
+      # trusted LAN, opt in with HEYP_BIND=0.0.0.0 (e.g. in .env).
+      - "${HEYP_BIND:-127.0.0.1}:${HEYP_PORT:-8080}:8080"
+    environment:
+      HEYP_MAX_UPLOAD_MB: "${HEYP_MAX_UPLOAD_MB:-100}"
+      HEYP_MAX_FILES: "${HEYP_MAX_FILES:-200}"
+      HEYP_MAX_PIXELS: "${HEYP_MAX_PIXELS:-50000000}"
+      HEYP_TTL_MINUTES: "${HEYP_TTL_MINUTES:-60}"
+      HEYP_MAX_JOBS: "${HEYP_MAX_JOBS:-2}"
+      HEYP_CACHE_MB: "${HEYP_CACHE_MB:-512}"
+      HEYP_ALLOW_CROSS_ORIGIN: "${HEYP_ALLOW_CROSS_ORIGIN:-0}"
+      HEYP_DOCS: "${HEYP_DOCS:-0}"
+    # Memory budget (measured): ~0.45 GB process + ONNX models, up to ~0.9 GB of caches (HEYP_CACHE_MB
+    # plus the mask/analysis caches), whatever /tmp holds (RAM-backed, charged here), and per running job
+    # (HEYP_MAX_JOBS) about 0.8 GB for a 12 MP photo up to ~1.9 GB for a 50 MP one (HEYP_MAX_PIXELS;
+    # background removal is the worst case). 4g fits two concurrent 50 MP background removals (peak
+    # 3.6 GB), or a full /tmp with phone-size photos. Over the limit only heyp is OOM-killed (and
+    # restarted, wiping uploads). Raise HEYP_MEM_LIMIT together with HEYP_MAX_PIXELS, HEYP_MAX_JOBS or
+    # HEYP_TMP_SIZE; on a host with less free RAM, lower those instead.
+    mem_limit: "${HEYP_MEM_LIMIT:-4g}"
+    pids_limit: 512
+    read_only: true
+    tmpfs:
+      # Uploads (each <= HEYP_MAX_UPLOAD_MB) and ZIP spools (>32 MB) live here: 1g holds ten max-size
+      # uploads, or a batch of ~100 phone photos plus its ZIP. When full, requests get 507, not an OOM kill.
+      - "/tmp:size=${HEYP_TMP_SIZE:-1g}"
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped

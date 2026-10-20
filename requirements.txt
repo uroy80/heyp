@@ -1,0 +1,14 @@
+# Runtime dependencies (top level, human-edited). The image installs the fully pinned, hash-checked
+# requirements.lock instead; regenerate it with scripts/lock.sh after editing this file.
+fastapi==0.143.2
+# Plain uvicorn plus the two speed-ups from uvicorn[standard]; its reload/websocket/yaml/dotenv extras
+# are not used by heyp (dev --reload falls back to StatReload).
+uvicorn==0.54.0
+uvloop==0.23.0 ; sys_platform != "win32" and sys_platform != "cygwin" and platform_python_implementation != "PyPy"
+httptools==0.9.0
+python-multipart==0.0.32
+pillow==12.3.0
+pillow-heif==1.8.1
+numpy==2.5.4
+opencv-python-headless==5.0.0.93
+onnxruntime==1.31.0
