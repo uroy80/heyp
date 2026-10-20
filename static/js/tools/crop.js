@@ -3,7 +3,7 @@
 
 import { h, append } from '../dom.js';
 import { state, activeFile, baseDims, passportActive, ratioLabel, cropPx, CROP_RATIOS } from '../state.js';
-import { toolHead, group, segmented, slider, numberField, note } from '../controls.js';
+import { toolHead, group, segmented, slider, numberField, note, infoTip } from '../controls.js';
 import { icon } from '../icons.js';
 
 const RATIO_LABEL = { free: 'Free', original: 'Original' };
@@ -29,13 +29,13 @@ export default {
     const crop = f?.crop;
     const pp = passportActive();
 
-    append(root, toolHead('Crop', 'Drag the box or its handles, or let heyp find the subject. Crop is set per photo.', { onReset: () => app.resetTool(this), active: this.isActive() }));
+    append(root, toolHead('Crop', 'Set per photo.', { onReset: () => app.resetTool(this), active: this.isActive() }));
     if (pp) {
-      append(root, note('Passport framing defines the crop. Turn off Passport to crop manually.', 'warn'));
+      append(root, note('Passport sets the crop — turn it off to crop.', 'warn'));
       return;
     }
     if (!f) {
-      append(root, note('Add a photo to start cropping.', 'info'));
+      append(root, note('Add a photo first.', 'info'));
       return;
     }
 
@@ -60,7 +60,7 @@ export default {
     r.size = h('p', { class: 'readout-line', 'aria-live': 'polite' });
     const parts = [
       group(null, r.ratio),
-      group('Auto', r.auto, h('p', { class: 'hint' }, 'Smart and Face use the selected ratio — the box’s shape with Free, 1:1 when there is none.')),
+      group({ title: 'Auto', tip: 'Smart and Face use the selected ratio (the box’s shape with Free, else 1:1).' }, r.auto),
     ];
 
     if (crop?.kind === 'trim') {
@@ -68,15 +68,15 @@ export default {
       const pad = numberField({ label: 'Padding', value: crop.padding, suffix: 'px', step: 1, min: 0, max: 2000, onChange: (v) => { crop.padding = Math.max(0, Math.round(v || 0)); app.changed(); } });
       parts.push(group('Trim', tol, pad, manualLink(app)));
     } else if (crop?.kind === 'aspect') {
-      parts.push(group(null, note(`${crop.anchor === 'face' ? 'Face' : 'Smart'} crop at ${ratioLabel(crop.ratio)} — the preview shows the result.`, 'info'), manualLink(app)));
+      parts.push(group(null, manualLink(app)));
     }
 
     r.resetBtn = h('button', { type: 'button', class: 'btn', onclick: () => app.resetTool(this), disabled: !crop }, 'Reset crop');
     r.applyBtn = state.files.length > 1 ? h('button', { type: 'button', class: 'btn', onclick: () => app.crop.applyAll(), disabled: !crop }, `Apply to all ${state.files.length}`) : null;
     const actions = h('div', { class: 'btn-row' }, r.resetBtn, r.applyBtn);
 
-    append(root, ...parts, r.size, actions,
-      h('p', { class: 'hint kbd-hint' }, 'Arrows nudge · Shift ×10 · Alt+arrows resize · Esc reverts · drag outside the box to draw a new one.'));
+    append(root, ...parts, h('div', { class: 'readout-tip' }, r.size,
+      infoTip('Drag outside the box to draw a new one. Keys: arrows nudge, Shift ×10, Alt resizes, Esc reverts.', { label: 'Crop box tips' })), actions);
     this.sync(app);
   },
 
@@ -90,7 +90,7 @@ export default {
     r.resetBtn.disabled = !c;
     if (r.applyBtn) r.applyBtn.disabled = !c;
     const { w, h: hh } = baseDims(f);
-    let text = c?.kind === 'trim' ? 'Auto trim — borders are detected on export' : '';
+    let text = c?.kind === 'trim' ? 'Auto trim' : c?.kind === 'aspect' ? `${c.anchor === 'face' ? 'Face' : 'Smart'} crop · ${ratioLabel(c.ratio)}` : '';
     if (!c || c.kind === 'box') {
       const px = c ? cropPx(c, w, hh) : { w, h: hh };
       text = `${px.w} × ${px.h} px${c ? ` of ${w} × ${hh}` : ' · full image'}`;
@@ -106,5 +106,5 @@ function isAuto(c, kind) {
 }
 
 function manualLink(app) {
-  return h('button', { type: 'button', class: 'link-btn', onclick: () => app.crop.manual() }, 'Adjust the box by hand instead');
+  return h('button', { type: 'button', class: 'link-btn', onclick: () => app.crop.manual() }, 'Adjust by hand');
 }

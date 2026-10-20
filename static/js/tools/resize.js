@@ -32,6 +32,7 @@ const MODES = [
   { value: 'dpi', label: 'DPI only' },
 ];
 
+const FIT_TIP = 'When the shape differs: Fill crops the overflow, Fit keeps everything, Pad adds borders, Stretch distorts.';
 const FIT = [
   { value: 'fill', label: 'Fill', title: 'Cover the box, crop the overflow' },
   { value: 'fit', label: 'Fit', title: 'Fit inside the box, keep everything' },
@@ -118,10 +119,8 @@ export default {
         onLock: (v) => { rs.lock = v; app.changed({ panel: true }); },
       });
       append(body, pair);
-      if (rs.lock) {
-        append(body, h('p', { class: 'hint' }, state.files.length > 1 ? 'The other side follows each photo’s own aspect ratio.' : 'The other side follows the aspect ratio.'));
-      } else {
-        r.fit = segmented({ label: 'When the shape differs', options: FIT, value: rs.fit, cols: 4, onChange: (v) => { rs.fit = v; syncEnlargeHint(); touch(); } });
+      if (!rs.lock) {
+        r.fit = segmented({ label: 'Fit', tip: FIT_TIP, options: FIT, value: rs.fit, cols: 4, onChange: (v) => { rs.fit = v; syncEnlargeHint(); touch(); } });
         append(body, r.fit);
       }
     } else if (rs.mode === 'percent') {
@@ -161,11 +160,11 @@ export default {
       });
       append(body, unit, pair, dpiField(app, touch));
       if (!rs.lock) {
-        r.fit = segmented({ label: 'When the shape differs', options: FIT, value: rs.fit, cols: 4, onChange: (v) => { rs.fit = v; touch(); } });
+        r.fit = segmented({ label: 'Fit', tip: FIT_TIP, options: FIT, value: rs.fit, cols: 4, onChange: (v) => { rs.fit = v; touch(); } });
         append(body, r.fit);
       }
     } else if (rs.mode === 'dpi') {
-      append(body, dpiField(app, touch), note('Pixels stay exactly the same — only the print size recorded in the file changes.', 'info'));
+      append(body, dpiField(app, touch, 'Pixels stay the same; only the print size saved in the file changes.'));
     }
 
     r.enlarge = toggle({ label: 'Don’t enlarge', checked: rs.noEnlarge, hint: enlargeHint(), onChange: (v) => { rs.noEnlarge = v; touch(); } });
@@ -176,8 +175,8 @@ export default {
       h('legend', { class: 'sr-only' }, 'Resize options'),
       presetSel, mode, body, r.enlarge);
     append(root,
-      toolHead('Resize', 'Set pixel dimensions, print size or DPI. Applies to every file.', { onReset: () => app.resetTool(this), active: this.isActive() }),
-      passportActive() ? note('Passport framing sets the size. Turn off Passport to resize manually.', 'warn') : null,
+      toolHead('Resize', null, { onReset: () => app.resetTool(this), active: this.isActive() }),
+      passportActive() ? note('Passport sets the size — turn it off to resize.', 'warn') : null,
       fs,
       r.readout,
     );
@@ -206,18 +205,18 @@ function padding() {
 
 function enlargeHint() {
   return padding()
-    ? 'Photo is not enlarged; the canvas is still padded to the exact size.'
-    : 'Leave photos that are already smaller untouched.';
+    ? 'The photo isn’t enlarged; the canvas is still padded to the exact size.'
+    : 'Photos already smaller are left as they are.';
 }
 
 function syncEnlargeHint() {
-  const hint = r.enlarge?.querySelector('.hint');
+  const hint = r.enlarge?.querySelector('[role="tooltip"]');
   if (hint) hint.textContent = enlargeHint();
 }
 
-function dpiField(app, touch) {
+function dpiField(app, touch, tip) {
   const rs = state.resize;
-  const f = numberField({ label: 'Resolution', value: rs.dpi, suffix: 'DPI', step: 1, min: 1, max: 2400, onChange: (v) => { rs.dpi = v; touch(); } });
+  const f = numberField({ label: 'Resolution', tip, value: rs.dpi, suffix: 'DPI', step: 1, min: 1, max: 2400, onChange: (v) => { rs.dpi = v; touch(); } });
   return h('div', { class: 'stack-sm' }, f,
     quickChips([72, 150, 300, 600].map((v) => ({ value: v, label: String(v), active: posInt(rs.dpi) === v })), (v) => { rs.dpi = v; f.input.value = v; touch(); }, { label: 'Common DPI values' }));
 }

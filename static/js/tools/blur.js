@@ -18,7 +18,7 @@ export { PIXELATE_MIN };
 export const minStrength = (mode) => (mode === 'pixelate' ? PIXELATE_MIN : 0.1);
 
 /** What the styles really do — Solid is the only one that removes the detail by construction (img-06, UIH-12). */
-export const BLUR_HINT = 'The style applies to every photo. Blur and pixelate hide detail from casual viewers but are not guaranteed to be irreversible, especially at low strength. Use Solid for text, licence plates or anything that must stay secret.';
+export const BLUR_HINT = 'Use Solid for text, licence plates or anything secret — blur and pixelate may be reversible.';
 
 let r = {};
 
@@ -37,7 +37,6 @@ export default {
   id: 'blur',
   title: 'Blur',
   icon: 'blur',
-  kicker: 'Privacy',
 
   isActive: () => state.files.some((f) => activeRegions(f).length > 0),
   reset() {
@@ -49,9 +48,9 @@ export default {
     r = {};
     const b = state.blur;
     const f = activeFile();
-    append(root, toolHead('Blur faces & plates', 'Hide faces, licence plates or anything else. Draw boxes on the photo, or let heyp suggest them.', { onReset: () => app.resetTool(this), active: this.isActive() }));
+    append(root, toolHead('Blur faces & plates', null, { onReset: () => app.resetTool(this), active: this.isActive() }));
     if (!f) {
-      append(root, note('Add a photo, then draw a box over what you want hidden.', 'info'));
+      append(root, note('Add a photo first.', 'info'));
       return;
     }
     const busy = app.detectBusy();
@@ -66,23 +65,22 @@ export default {
       findBtn('faces', 'Find faces', 'face', canFaces),
       findBtn('plates', 'Find plates', 'target', canPlates));
     const allBtn = state.files.length > 1
-      ? h('button', { type: 'button', class: 'link-btn', disabled: busy || !(canFaces || canPlates), onclick: () => app.detect({ what: ['faces', 'plates'].filter((k) => (k === 'faces' ? canFaces : canPlates)), all: true }) }, `Find faces & plates in all ${state.files.length} photos`)
+      ? h('button', { type: 'button', class: 'link-btn', disabled: busy || !(canFaces || canPlates), onclick: () => app.detect({ what: ['faces', 'plates'].filter((k) => (k === 'faces' ? canFaces : canPlates)), all: true }) }, `Find in all ${state.files.length} photos`)
       : null;
-    append(root, group('Suggestions', r.find, allBtn,
-      h('p', { class: 'hint' }, 'Suggestions are pre-selected: untick any you want to keep visible. Detection only finds faces — it never tells who they are.')));
+    append(root, group({ title: 'Find', tip: 'Found boxes are ticked: untick any to keep visible. Detection finds faces, never who they are.' }, r.find, allBtn));
 
     r.list = h('ul', { class: 'region-list', 'aria-label': 'Areas to hide on this photo' });
-    r.clear = h('button', { type: 'button', class: 'link-btn', onclick: () => { f.regions = []; app.changed({ panel: true }); } }, 'Remove all boxes on this photo');
-    append(root, group('On this photo', r.list, h('p', { class: 'hint' }, 'Drag on the photo to draw a box. Select a box to move or resize it; Delete removes it.'), r.clear));
+    r.clear = h('button', { type: 'button', class: 'link-btn', onclick: () => { f.regions = []; app.changed({ panel: true }); } }, 'Remove all boxes');
+    append(root, group({ title: 'On this photo', tip: 'Select a box to move or resize it; Delete removes it.' }, r.list, r.clear));
 
     const mode = segmented({
-      label: 'Style', cols: 3, value: b.mode,
+      label: 'Style', hideLabel: true, cols: 3, value: b.mode,
       options: [{ value: 'blur', label: 'Blur' }, { value: 'pixelate', label: 'Pixelate' }, { value: 'solid', label: 'Solid' }],
       onChange: (v) => { b.mode = v; if (v === 'pixelate') b.strength = Math.max(PIXELATE_MIN, b.strength); app.changed({ panel: true }); },
     });
     const strength = b.mode === 'solid' ? null : slider({ label: 'Strength', min: minStrength(b.mode), max: 1, step: 0.05, value: Math.max(minStrength(b.mode), b.strength), resetTo: 0.6, format: (v) => `${Math.round(v * 100)}%`, onInput: (v) => { b.strength = v; app.changed(); } });
     const color = b.mode === 'solid' ? swatches({ label: 'Colour', colors: COLORS, value: b.color, defaultValue: '#141210', onChange: (v) => { b.color = v; app.changed(); } }) : null;
-    append(root, group('Style', mode, strength, color, h('p', { class: 'hint' }, BLUR_HINT)));
+    append(root, group('Style', mode, strength, color, b.mode === 'solid' ? null : note(BLUR_HINT, 'info')));
     this.sync(app);
   },
 
@@ -99,7 +97,7 @@ export default {
       // picks the box on the photo (to move or resize it) — it never un-hides anything, so it isn't called "Show"
       h('button', { type: 'button', class: 'link-btn', 'aria-label': `Select ${row.label} on the photo`, onclick: () => app.selectItem(row.id) }, 'Select'),
       h('button', { type: 'button', class: 'chip-x', 'aria-label': `Remove ${row.label}`, title: 'Remove', onclick: () => { f.regions = f.regions.filter((x) => x.id !== row.id); app.changed({ panel: true }); } }, icon('x', 12)))));
-    if (!rows.length) r.list.append(h('li', { class: 'region-empty muted' }, 'No boxes yet.'));
+    if (!rows.length) r.list.append(h('li', { class: 'region-empty muted' }, 'No boxes yet — drag on the photo to draw one.'));
     r.clear.hidden = !rows.length;
   },
 };

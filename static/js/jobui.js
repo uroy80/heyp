@@ -134,7 +134,7 @@ export function continueMenu({ targets, onPick, label = 'Continue with', up = fa
     groups.push(h('div', { class: 'cw-group' }, h('p', { class: 'cw-head' }, 'Elsewhere'),
       h('ul', {}, h('li', {}, h('a', { class: 'cw-item', href: targets.sibling, target: '_blank', rel: 'noopener' },
         h('span', { class: 'cw-title' }, 'Open heypdf'), h('span', { class: 'cw-cat' }, 'PDF tools')))),
-      h('p', { class: 'cw-note' }, 'A separate site: nothing is sent there. Download your file, then add it in heypdf.')));
+      h('p', { class: 'cw-note' }, 'Download first, then add the file there.')));
   }
   const d = h('details', { class: `cw${up ? ' cw-up' : ''}` },
     h('summary', { class: 'btn btn-icon-text cw-btn' }, h('span', {}, label), icon('chevron', 14)),

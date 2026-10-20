@@ -6,7 +6,7 @@ import { state, defaults, toolEntry } from '../state.js';
 import { toolHead, group, segmented, toggle, numberField, quickChips, note } from '../controls.js';
 import { icon } from '../icons.js';
 import { fitOptions, enumOf } from '../schema.js';
-import { jobCard, isRunning } from '../jobui.js';
+import { jobCard } from '../jobui.js';
 
 export const GIF_TOOL = 'img.make_gif';
 const DELAYS = [100, 250, 500, 1000, 2000];
@@ -54,7 +54,6 @@ export default {
   id: 'gif',
   title: 'Make GIF',
   icon: 'gif',
-  kicker: 'Moving pictures',
   jobTool: GIF_TOOL,
 
   isActive: () => false,
@@ -67,13 +66,13 @@ export default {
     r = {};
     const g = state.gif;
     const tool = toolEntry(GIF_TOOL);
-    append(root, toolHead('Make GIF', 'Turn your photos into an animated GIF or WebP — one frame per photo, in strip order.', { onReset: () => app.resetTool(this), active: false }));
+    append(root, toolHead('Make GIF', 'One frame per photo.', { onReset: () => app.resetTool(this), active: false }));
     if (state.tools && !tool) {
-      append(root, note('This server doesn’t offer Make GIF.', 'warn'));
+      append(root, note('Not available on this server.', 'warn'));
       return;
     }
     if (tool && tool.available === false) {
-      append(root, note(tool.reason || 'Make GIF is unavailable right now.', 'warn'));
+      append(root, note(tool.reason || 'Not available right now.', 'warn'));
       return;
     }
     const frames = gifFrames();
@@ -103,8 +102,8 @@ export default {
       h('button', { type: 'button', class: 'icon-btn layer-btn', 'aria-label': `Move ${f.name} earlier`, title: 'Earlier', disabled: i === 0, onclick: () => app.moveFileTo(f.id, i - 1) }, icon('arrowUp', 14)),
       h('button', { type: 'button', class: 'icon-btn layer-btn', 'aria-label': `Move ${f.name} later`, title: 'Later', disabled: i === state.files.length - 1, onclick: () => app.moveFileTo(f.id, i + 1) }, icon('arrowDown', 14))));
     });
-    append(root, group(`Frames · ${frames.length}`, state.files.length ? r.list : note('Add the photos you want to animate — at least two.', 'info'),
-      state.files.length ? h('p', { class: 'hint' }, 'Drag rows or use the arrows to change the order. Untick a photo to leave it out.') : null));
+    append(root, group({ title: `Frames · ${frames.length}`, tip: 'Drag rows or use the arrows to reorder. Untick a photo to leave it out.' },
+      state.files.length ? r.list : note('Add at least two photos.', 'info')));
 
     // flip-book preview
     if (frames.length >= 2) {
@@ -114,41 +113,40 @@ export default {
     }
 
     // timing & output
-    r.delay = numberField({ label: 'Each frame shows for', value: fmtNum(g.delay / 1000, 3), suffix: 's', step: 0.05, min: MIN_DELAY / 1000, max: MAX_DELAY / 1000, onChange: (v) => { g.delay = v > 0 ? Math.round(v * 1000) : g.delay; app.changed({ preview: false }); this.restartPlayer(app); } });
+    r.delay = numberField({ label: 'Frame time', value: fmtNum(g.delay / 1000, 3), suffix: 's', step: 0.05, min: MIN_DELAY / 1000, max: MAX_DELAY / 1000, onChange: (v) => { g.delay = v > 0 ? Math.round(v * 1000) : g.delay; app.changed({ preview: false }); this.restartPlayer(app); } });
     const chips = quickChips(DELAYS.map((ms) => ({ value: ms, label: `${fmtNum(ms / 1000, 2)} s`, active: g.delay === ms })), (ms) => { g.delay = ms; r.delay.input.value = fmtNum(ms / 1000, 3); app.changed({ preview: false }); this.restartPlayer(app); }, { label: 'Common frame times' });
-    const loop = toggle({ label: 'Loop forever', checked: g.loop, hint: 'Off plays the animation once.', onChange: (v) => { g.loop = v; app.changed({ preview: false }); } });
+    const loop = toggle({ label: 'Loop forever', checked: g.loop, onChange: (v) => { g.loop = v; app.changed({ preview: false }); } });
     const sizes = enumOf(tool?.options_schema, ['size', 'max_size', 'max_side']) || SIZES;
     const size = segmented({
-      label: 'Size (longest side)', cols: Math.min(5, sizes.length), size: 'sm', value: String(g.size),
+      label: 'Longest side', cols: Math.min(5, sizes.length), size: 'sm', value: String(g.size),
       options: sizes.map((s) => ({ value: String(s), label: s ? `${s}` : 'Original' })),
       onChange: (v) => { g.size = Number(v); app.changed({ preview: false }); },
     });
     const fmts = enumOf(tool?.options_schema, ['format']) || ['gif', 'webp'];
     const format = segmented({
-      label: 'Format', cols: 2, value: g.format,
+      label: 'Format', cols: 2, value: g.format, tip: 'WebP is far smaller; GIF plays everywhere. Frames of other sizes are fitted to the first frame.',
       options: fmts.map((f) => ({ value: f, label: f === 'webp' ? 'Animated WebP' : f.toUpperCase() })),
       onChange: (v) => { g.format = v; app.changed({ preview: false }); },
     });
-    append(root, group('Timing', r.delay, chips, loop), group('Output', size, format,
-      h('p', { class: 'hint' }, 'WebP is far smaller; GIF plays everywhere. Frames of different sizes are fitted onto the first frame’s canvas.')));
+    append(root, group('Timing', r.delay, chips, loop), group('Output', size, format));
 
     if (app.hasEdits()) {
       // UIH-04: the frames get the edits (crops, captions, blur…) unless switched off; the note says which it is
       if (app.canApplyEdits?.()) {
         append(root, group('Edits', toggle({
           label: 'Apply my edits to the frames', checked: g.applyEdits !== false,
-          hint: 'Crops, captions, blurred areas and the other sections’ edits are applied to each frame first. Off uses the photos as uploaded.',
+          hint: 'Crops, captions, blurred areas and other edits go into each frame. Off uses the photos as uploaded.',
           onChange: (v) => { g.applyEdits = v; app.changed({ panel: true, preview: false }); },
         })));
-        if (g.applyEdits === false) append(root, note('The frames are the photos as uploaded: edits from the other sections — including blurred areas — are not in the GIF.', 'warn'));
+        if (g.applyEdits === false) append(root, note('Edits (including blur) won’t be in the GIF.', 'warn'));
       } else {
-        append(root, note('This server can’t apply edits to GIF frames: the frames are the photos as uploaded. To animate edited photos, download them, add the downloaded files with “Add photos”, then make the GIF.', 'warn'));
+        append(root, note('Edits (including blur) won’t be in the GIF — download edited photos and add them first.', 'warn'));
       }
     }
 
     // run
     const why = () => {
-      if (!tool && !state.tools) return 'Checking what this server offers…';
+      if (!tool && !state.tools) return 'Loading…';
       if (frames.length < min) return `Pick at least ${min} photos.`;
       if (max && frames.length > max) return `At most ${max} frames — untick ${frames.length - max}.`;
       return null;
@@ -166,7 +164,6 @@ export default {
       },
       renderResult: (res) => app.resultView(res, { kind: 'image', ext: state.gif.format, source: 'gif' }),
     }));
-    if (isRunning('gif')) append(root, h('p', { class: 'hint' }, 'You can keep working while it renders.'));
   },
 
   togglePlay(app) {

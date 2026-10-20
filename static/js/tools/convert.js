@@ -54,26 +54,25 @@ export default {
       options: [{ value: 'srgb', label: 'Convert to sRGB' }, { value: 'keep', label: 'Keep profile' }],
       onChange: (v) => { o.colorspace = v; app.changed(); },
     });
-    r.fill = swatches({ label: 'Fill transparent areas with', colors: FILL, value: o.background, onChange: (v) => { o.background = v; app.changed(); } });
+    r.fill = swatches({ label: 'Transparency fill', colors: FILL, value: o.background, onChange: (v) => { o.background = v; app.changed(); } });
     r.progressive = toggle({ label: 'Progressive JPEG', checked: o.progressive, onChange: (v) => { o.progressive = v; app.changed(); } });
     r.chroma = selectField({
-      label: 'Chroma subsampling', value: o.chroma,
+      label: 'Chroma subsampling', value: o.chroma, tip: 'Auto uses 4:4:4 at quality 90 and above.',
       options: [
-        { value: 'auto', label: 'Auto (4:4:4 at quality ≥ 90)' },
-        { value: '444', label: '4:4:4 — sharpest colour edges' },
+        { value: 'auto', label: 'Auto' },
+        { value: '444', label: '4:4:4 (sharpest)' },
         { value: '422', label: '4:2:2' },
-        { value: '420', label: '4:2:0 — smallest' },
+        { value: '420', label: '4:2:0 (smallest)' },
       ],
       onChange: (v) => { o.chroma = v; app.changed(); },
     });
-    r.filename = textField({ label: 'File name (single file)', value: o.filename, placeholder: 'Same as original', onChange: (v) => { o.filename = v; app.changed({ preview: false }); } });
+    r.filename = textField({ label: 'File name', value: o.filename, placeholder: 'Same as original', tip: 'Used when you download one file.', onChange: (v) => { o.filename = v; app.changed({ preview: false }); } });
     r.jpegOnly = h('div', { class: 'stack' }, r.progressive, r.chroma);
 
     append(root,
-      toolHead('Convert', 'Change the file format. iPhone HEIC photos become JPG or PNG that open anywhere.', { onReset: () => app.resetTool(this), active: this.isActive() }),
+      toolHead('Convert', null, { onReset: () => app.resetTool(this), active: this.isActive() }),
       r.summary,
-      group(null, r.format, r.lossless,
-        h('p', { class: 'hint convert-hint' }, 'Quality and metadata are set once, in ', h('b', {}, 'Export'), ' below.')),
+      group(null, r.format, r.lossless),
       r.combine,
       r.alphaNote,
       h('details', { class: 'disclosure' },
@@ -105,6 +104,6 @@ export default {
     const hasAlpha = state.files.some((x) => x.info.has_alpha) || state.background.mode === 'remove';
     const loses = fmt !== 'original' && !ALPHA_FORMATS.has(fmt);
     r.alphaNote.hidden = !(hasAlpha && loses);
-    r.alphaNote.querySelector('span').textContent = `${FORMAT_LABEL[fmt]} has no transparency — transparent areas are filled with ${colorName(o.background)?.toLowerCase() || o.background}. Change under Advanced, or pick PNG/WebP.`;
+    r.alphaNote.querySelector('span').textContent = `${FORMAT_LABEL[fmt]} fills transparency with ${colorName(o.background)?.toLowerCase() || o.background} — pick PNG or WebP to keep it.`;
   },
 };

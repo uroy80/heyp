@@ -1,4 +1,5 @@
 // Form building blocks used by the tool panels. Each returns an element; some expose .set().
+// Explanations live behind a small "i" button (infoTip), never as paragraphs under the controls.
 
 import { h, uid, num } from './dom.js';
 import { icon } from './icons.js';
@@ -11,8 +12,92 @@ export function toolHead(title, desc, { onReset, active = false } = {}) {
     desc ? h('p', { class: 'tool-desc' }, desc) : null);
 }
 
+let closeOpenTip = null;
+let bubble = null; // the one visible tip on the page (outside the panels, so no scroller or mask clips it)
+
+/**
+ * A small "i" button that shows `text` on hover, keyboard focus or tap, and hides on Esc, blur or scroll. The text
+ * stays in place as the button's description (aria-describedby, visually hidden), so screen readers read it with
+ * the button; the bubble you see is an aria-hidden copy at the end of <body>. Returns the wrapper; its `tipId` is
+ * the text's id (controls point their own aria-describedby at it).
+ */
+export function infoTip(text, { label = 'More info' } = {}) {
+  const id = uid('tip');
+  const btn = h('button', { type: 'button', class: 'tip-btn', 'aria-label': label, 'aria-describedby': id }, 'i');
+  const desc = h('span', { class: 'sr-only', id, role: 'tooltip' }, text);
+  const wrap = h('span', { class: 'tip' }, btn, desc);
+  let pinned = false;
+  const place = () => {
+    const vw = document.documentElement.clientWidth;
+    bubble.style.maxWidth = `${Math.min(260, vw - 16)}px`;
+    const b = btn.getBoundingClientRect();
+    const p = bubble.getBoundingClientRect();
+    const above = b.top - p.height - 8;
+    bubble.style.left = `${Math.max(8, Math.min(vw - p.width - 8, b.left + b.width / 2 - p.width / 2))}px`;
+    bubble.style.top = `${above >= 8 ? above : b.bottom + 8}px`;
+  };
+  const onScroll = () => hide();
+  function hide() {
+    pinned = false;
+    wrap.classList.remove('is-open');
+    window.removeEventListener('scroll', onScroll, true);
+    if (closeOpenTip !== hide) return;
+    closeOpenTip = null;
+    if (bubble) bubble.hidden = true;
+  }
+  const show = () => {
+    if (closeOpenTip && closeOpenTip !== hide) closeOpenTip();
+    closeOpenTip = hide;
+    if (!bubble) {
+      bubble = h('div', { class: 'tip-pop', 'aria-hidden': 'true', hidden: true });
+      document.body.append(bubble);
+    }
+    bubble.textContent = desc.textContent; // a control may have changed its note since
+    bubble.hidden = false;
+    wrap.classList.add('is-open');
+    place();
+    window.addEventListener('scroll', onScroll, true);
+  };
+  btn.addEventListener('mouseenter', show);
+  btn.addEventListener('mouseleave', () => { if (!pinned) hide(); });
+  btn.addEventListener('focus', show);
+  btn.addEventListener('blur', hide);
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation(); // e.g. the drop zone opens the file picker on a click
+    if (pinned) hide();
+    else {
+      show();
+      pinned = true;
+    }
+  });
+  btn.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !wrap.classList.contains('is-open')) return;
+    e.preventDefault();
+    e.stopPropagation(); // Esc closes the tip, not the crop or a dialog
+    hide();
+  });
+  wrap.tipId = id;
+  return wrap;
+}
+
+/** A label (or legend text) followed by its info tip; `tip` null → just the label. */
+function withTip(labelEl, tip, name) {
+  if (!tip) return { head: labelEl, tipId: null };
+  const t = infoTip(tip, { label: `About ${name}` });
+  return { head: h('span', { class: 'label-tip' }, labelEl, t), tipId: t.tipId };
+}
+
+/** Section of a panel. `title` is a string, or {title, tip} for a heading with an info tip. */
 export function group(title, ...children) {
-  return h('section', { class: 'group' }, title ? h('h3', { class: 'group-title' }, title) : null, ...children);
+  let head = null;
+  if (title && typeof title === 'object') {
+    head = h('div', { class: 'group-head' }, h('h3', { class: 'group-title' }, title.title),
+      title.tip ? infoTip(title.tip, { label: `About ${title.title}` }) : null);
+  } else if (title) {
+    head = h('h3', { class: 'group-title' }, title);
+  }
+  return h('section', { class: 'group' }, head, ...children);
 }
 
 export function note(text, kind = '') {
@@ -21,29 +106,33 @@ export function note(text, kind = '') {
 }
 
 /** Number input with optional suffix. onChange(value|null) fires on every keystroke. */
-export function numberField({ label, value, min, max, step = 'any', placeholder, suffix, onChange, id = uid('n'), hideLabel = false, inputmode = 'decimal' }) {
+export function numberField({ label, value, min, max, step = 'any', placeholder, suffix, onChange, id = uid('n'), hideLabel = false, inputmode = 'decimal', tip }) {
   const input = h('input', {
     type: 'number', id, min, max, step, placeholder, inputmode,
     value: value ?? '', class: 'input',
     oninput: () => onChange?.(num(input.value)),
   });
+  const { head, tipId } = withTip(h('label', { htmlFor: id, class: hideLabel ? 'sr-only' : 'label' }, label), hideLabel ? null : tip, label);
+  if (tipId) input.setAttribute('aria-describedby', tipId);
   const wrap = h('div', { class: 'field' },
-    h('label', { htmlFor: id, class: hideLabel ? 'sr-only' : 'label' }, label),
+    head,
     h('div', { class: 'input-wrap' }, input, suffix ? h('span', { class: 'suffix', 'aria-hidden': 'true' }, suffix) : null));
   wrap.input = input;
   wrap.set = (v) => { if (document.activeElement !== input) input.value = v ?? ''; };
   return wrap;
 }
 
-export function textField({ label, value, placeholder, onChange, id = uid('t'), type = 'text' }) {
+export function textField({ label, value, placeholder, onChange, id = uid('t'), type = 'text', tip }) {
   const input = h('input', { type, id, class: 'input', value: value ?? '', placeholder, spellcheck: 'false', autocomplete: 'off', oninput: () => onChange?.(input.value) });
-  const wrap = h('div', { class: 'field' }, h('label', { htmlFor: id, class: 'label' }, label), input);
+  const { head, tipId } = withTip(h('label', { htmlFor: id, class: 'label' }, label), tip, label);
+  if (tipId) input.setAttribute('aria-describedby', tipId);
+  const wrap = h('div', { class: 'field' }, head, input);
   wrap.input = input;
   return wrap;
 }
 
 /** Range slider with live readout; double-click (or the ↺ button) resets. */
-export function slider({ label, min, max, step, value, format = String, onInput, resetTo, id = uid('r') }) {
+export function slider({ label, min, max, step, value, format = String, onInput, resetTo, id = uid('r'), tip }) {
   const out = h('output', { class: 'slider-val', htmlFor: id });
   const input = h('input', { type: 'range', id, min, max, step, value, class: 'range' });
   const paint = () => {
@@ -58,8 +147,10 @@ export function slider({ label, min, max, step, value, format = String, onInput,
     : null;
   input.addEventListener('input', () => { paint(); onInput?.(Number(input.value)); });
   if (resetTo != null) input.addEventListener('dblclick', () => { input.value = resetTo; paint(); onInput?.(resetTo); });
+  const { head, tipId } = withTip(h('label', { htmlFor: id, class: 'label' }, label), tip, label);
+  if (tipId) input.setAttribute('aria-describedby', tipId);
   const wrap = h('div', { class: 'field slider' },
-    h('div', { class: 'field-row' }, h('label', { htmlFor: id, class: 'label' }, label), h('span', { class: 'slider-meta' }, resetBtn, out)),
+    h('div', { class: 'field-row' }, head, h('span', { class: 'slider-meta' }, resetBtn, out)),
     input);
   paint();
   wrap.input = input;
@@ -68,9 +159,18 @@ export function slider({ label, min, max, step, value, format = String, onInput,
 }
 
 /** Radio-based segmented control. options: [{value,label,disabled,title}]. */
-export function segmented({ label, options, value, onChange, name = uid('seg'), cols, hideLabel = false, size = '' }) {
-  const fs = h('fieldset', { class: `seg ${size ? `seg-${size}` : ''}` },
-    h('legend', { class: hideLabel ? 'sr-only' : 'label' }, label));
+export function segmented({ label, options, value, onChange, name = uid('seg'), cols, hideLabel = false, size = '', tip }) {
+  const fs = h('fieldset', { class: `seg ${size ? `seg-${size}` : ''}` });
+  if (tip && !hideLabel) {
+    // the group is named by the label text alone (not by the "i" button inside the legend)
+    const lid = uid('lg');
+    const t = infoTip(tip, { label: `About ${label}` });
+    fs.setAttribute('aria-labelledby', lid);
+    fs.setAttribute('aria-describedby', t.tipId);
+    fs.append(h('legend', { class: 'label label-tip' }, h('span', { id: lid }, label), t));
+  } else {
+    fs.append(h('legend', { class: hideLabel ? 'sr-only' : 'label' }, label));
+  }
   const row = h('div', { class: 'seg-row' });
   if (cols) row.style.setProperty('--cols', String(cols));
   const inputs = [];
@@ -88,23 +188,27 @@ export function segmented({ label, options, value, onChange, name = uid('seg'), 
   return fs;
 }
 
-/** Switch (checkbox with role=switch). */
+/** Switch (checkbox with role=switch). `hint` is shown behind an "i" button next to the label. */
 export function toggle({ label, checked, onChange, hint, disabled = false, id = uid('s') }) {
-  const hintId = hint ? `${id}-hint` : null;
-  const input = h('input', { type: 'checkbox', role: 'switch', id, checked, disabled, 'aria-describedby': hintId, onchange: () => onChange?.(input.checked) });
+  const t = hint ? infoTip(hint, { label: `About ${label}` }) : null;
+  const input = h('input', { type: 'checkbox', role: 'switch', id, checked, disabled, 'aria-describedby': t?.tipId, onchange: () => onChange?.(input.checked) });
   const wrap = h('div', { class: `switch-field ${disabled ? 'is-disabled' : ''}` },
-    h('label', { class: 'switch', htmlFor: id }, input, h('span', { class: 'track', 'aria-hidden': 'true' }), h('span', { class: 'switch-label' }, label)),
-    hint ? h('p', { class: 'hint', id: hintId }, hint) : null);
+    h('div', { class: 'switch-row' },
+      h('label', { class: 'switch', htmlFor: id }, input, h('span', { class: 'track', 'aria-hidden': 'true' }), h('span', { class: 'switch-label' }, label)),
+      t));
   wrap.input = input;
+  wrap.tip = t;
   wrap.set = (v) => { input.checked = Boolean(v); };
   return wrap;
 }
 
 /** <select>; options: [{value,label}] or groups: [{label, options:[…]}]. */
-export function selectField({ label, options = [], groups, value, onChange, id = uid('sel'), hideLabel = false, placeholder }) {
+export function selectField({ label, options = [], groups, value, onChange, id = uid('sel'), hideLabel = false, placeholder, tip }) {
   const sel = h('select', { id, class: 'input select', onchange: () => onChange?.(sel.value) });
   fillSelect(sel, { options, groups, value, placeholder });
-  const wrap = h('div', { class: 'field' }, h('label', { htmlFor: id, class: hideLabel ? 'sr-only' : 'label' }, label), h('div', { class: 'select-wrap' }, sel, icon('chevron', 16)));
+  const { head, tipId } = withTip(h('label', { htmlFor: id, class: hideLabel ? 'sr-only' : 'label' }, label), hideLabel ? null : tip, label);
+  if (tipId) sel.setAttribute('aria-describedby', tipId);
+  const wrap = h('div', { class: 'field' }, head, h('div', { class: 'select-wrap' }, sel, icon('chevron', 16)));
   wrap.select = sel;
   return wrap;
 }

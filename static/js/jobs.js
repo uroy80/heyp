@@ -18,7 +18,7 @@ export class JobError extends Error {
   }
 }
 
-const OFFLINE = 'Can’t reach heyp. Check your connection and try again.';
+const OFFLINE = 'Can’t reach heyp — check your connection and try again.';
 const FINAL = new Set(['done', 'failed', 'cancelled']);
 
 /**
@@ -63,9 +63,9 @@ async function errorOf(res) {
   const fallback = {
     404: 'This tool or job is no longer available.',
     413: 'Too large for this tool.',
-    422: 'These files or settings can’t be used with this tool.',
+    422: 'These files or settings don’t work with this tool.',
     429: 'Too many requests — wait a moment and try again.',
-    503: 'The server is busy or this tool is unavailable right now.',
+    503: 'The server is busy — try again in a moment.',
   }[res.status] || `${res.status} ${res.statusText || 'error'}`;
   const retry = res.status === 429 || res.status === 503 ? retryAfterSeconds(res.headers?.get?.('Retry-After')) : null;
   return new JobError(res.status, formatDetail(body?.detail, fallback), { retryAfter: retry, body });
@@ -193,7 +193,7 @@ export function createJobClient({ fetchImpl = (...a) => globalThis.fetch(...a), 
           job = await get(id, signal);
         } catch (e) {
           if (e?.name === 'AbortError') throw e;
-          if (e?.status === 404) throw new JobError(404, 'The job expired before it finished. Please run it again.');
+          if (e?.status === 404) throw new JobError(404, 'The job stopped before it finished — run it again.');
           if (e?.status === 0 && i < 30) { await sleep(2000); continue; }
           throw e;
         }

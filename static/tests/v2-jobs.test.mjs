@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { parseSSE, createJobClient, jobStatusLine, JobError } from '../js/jobs.js';
-import { copyFor, fmtMinutes, safeUrl, siblingUrl, DEFAULT_SOURCE_URL } from '../js/config.js';
+import { copyFor, safeUrl, siblingUrl, DEFAULT_SOURCE_URL } from '../js/config.js';
 import { continueTargets, outputKind } from '../js/continue.js';
 
 const ID = 'a'.repeat(32);
@@ -116,19 +116,16 @@ test('job status line', () => {
 
 // ── hosted-mode copy ────────────────────────────────────────────────────────
 
-test('copy: no mode claims "local"; an unknown deployment gets no deletion claim at all', () => {
+test('copy: no mode claims "local", and no mode prints a deletion time', () => {
   const local = copyFor(null);
   assert.equal(local.mode, 'local');
-  assert.equal(local.pill, '');
-  assert.equal(local.dateline, '');
   assert.ok(!/local only|this machine|container|never|third part/i.test(JSON.stringify(local)), JSON.stringify(local));
   const hosted = copyFor({ mode: 'hosted', ttl_minutes: 60, hard_ttl_minutes: 240, source_url: 'https://github.com/uroy80/heyp', version: '2.0.0' });
   assert.equal(hosted.mode, 'hosted');
   const text = JSON.stringify(hosted);
   assert.ok(!/local only|this machine|never the internet|nothing is uploaded/i.test(text), text);
-  assert.match(hosted.privacy, /1 hour/);
-  assert.match(hosted.pillTitle, /4 hours/);
-  assert.deepEqual(hosted.footer.map((l) => l.label), ['Privacy', 'Terms', 'Credits', 'Source code (AGPL-3.0)']);
+  assert.ok(!/hour|minute|delet|auto-delete/i.test(text), text);
+  assert.deepEqual(hosted.footer.map((l) => l.label), ['Privacy', 'Terms', 'Credits', 'Source (AGPL-3.0)']);
   assert.equal(hosted.version, '2.0.0');
 });
 
@@ -136,13 +133,9 @@ test('copy: hostile config values never become links or markup', () => {
   const c = copyFor({ mode: 'hosted', source_url: 'javascript:alert(1)', version: '<img src=x onerror=1>', ttl_minutes: -5 });
   assert.equal(c.source, DEFAULT_SOURCE_URL);
   assert.equal(c.version, null);
-  assert.equal(c.privacy, 'Open source (AGPL-3.0)', 'a broken TTL makes no deletion claim');
-  assert.equal(c.pill, '');
+  assert.equal(c.footer.at(-1).href, DEFAULT_SOURCE_URL);
   assert.equal(safeUrl('/privacy', 'x'), '/privacy');
   assert.equal(safeUrl('https://ok.example/a b', 'x'), 'x');
-  assert.equal(fmtMinutes(90), '90 minutes');
-  assert.equal(fmtMinutes(120), '2 hours');
-  assert.equal(fmtMinutes('nope'), null);
 });
 
 // ── "Continue with" ──────────────────────────────────────────────────────────

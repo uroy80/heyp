@@ -48,7 +48,6 @@ export default {
   id: 'editor',
   title: 'Photo editor',
   icon: 'editor',
-  kicker: 'Filters, frames & stickers',
 
   isActive: () => Boolean(filterOp() || frameOp() || state.files.some((f) => liveItems(f).length)),
   reset() {
@@ -61,7 +60,7 @@ export default {
     r = {};
     const e = state.editor;
     const f = activeFile();
-    append(root, toolHead('Photo editor', 'Filters and frames for every photo; text, stickers, shapes and drawings placed on this one.', { onReset: () => app.resetTool(this), active: this.isActive() }));
+    append(root, toolHead('Photo editor', null, { onReset: () => app.resetTool(this), active: this.isActive() }));
     const tabs = segmented({
       label: 'Editor tools', hideLabel: true, cols: 3, size: 'sm', value: e.tab,
       options: TABS.map((t) => ({ value: t.value, label: t.label, icon: t.icon })),
@@ -75,7 +74,7 @@ export default {
       r.fx = h('div', { class: 'fx-grid', role: 'group', 'aria-label': 'Filters' },
         app.catalog().filters.map((x) => filterSwatch(x, thumb, x.id === e.filter, (id) => { e.filter = id; if (!(e.intensity > 0)) e.intensity = 1; app.changed({ panel: true }); })));
       const intensity = e.filter === 'none' ? null : slider({ label: 'Intensity', min: 0.05, max: 1, step: 0.05, value: e.intensity, resetTo: 1, format: (v) => `${Math.round(v * 100)}%`, onInput: (v) => { e.intensity = v; app.changed(); } });
-      append(root, group(null, r.fx, intensity, h('p', { class: 'hint' }, 'Swatches are a quick impression; the picture shows the real result. Filters apply to every photo.')));
+      append(root, group(null, r.fx, intensity));
     } else if (e.tab === 'frames') {
       const frames = h('div', { class: 'frame-grid', role: 'group', 'aria-label': 'Frames' },
         app.catalog().frames.map((x) => h('button', {
@@ -94,9 +93,9 @@ export default {
         }
         parts.push(slider({ label: 'Width', min: 0, max: 0.15, step: 0.005, value: e.frameWidth ?? defWidth, resetTo: defWidth, format: (v) => `${Math.round(v * 1000) / 10}%`, onInput: (v) => { e.frameWidth = v; app.changed(); } }));
       }
-      append(root, group(null, ...parts, h('p', { class: 'hint' }, 'Frames apply to every photo.')));
+      append(root, group(null, ...parts));
     } else if (!f) {
-      append(root, note('Add a photo to place text, stickers, shapes or drawings on it.', 'info'));
+      append(root, note('Add a photo first.', 'info'));
     } else if (e.tab === 'text') {
       append(root, group(null, h('button', { type: 'button', class: 'btn btn-icon-text', onclick: () => app.addItem({ kind: 'text', text: 'Your text', font: 'libre_franklin', color: '#ffffff', size: 0.08, opacity: 1, rotation: 0, align: 'center' }, { focusText: true }) }, icon('plus', 16), h('span', {}, 'Add text'))));
       append(root, this.selectedPanel(app, 'text'));
@@ -125,7 +124,7 @@ export default {
     } else if (e.tab === 'brush') {
       const bs = e.brush;
       append(root, group(null,
-        toggle({ label: 'Draw on the photo', checked: e.drawing, hint: 'While this is on, dragging on the photo paints a stroke.', onChange: (v) => { e.drawing = v; app.changed({ preview: false }); } }),
+        toggle({ label: 'Draw on the photo', checked: e.drawing, onChange: (v) => { e.drawing = v; app.changed({ preview: false }); } }),
         swatches({ label: 'Colour', colors: INK, value: bs.color, defaultValue: '#e0262e', onChange: (v) => { bs.color = v; app.changed({ preview: false }); } }),
         slider({ label: 'Width', min: 0.002, max: 0.06, step: 0.001, value: bs.width, resetTo: 0.012, format: (v) => `${Math.round(v * 1000) / 10}%`, onInput: (v) => { bs.width = v; app.changed({ preview: false }); } }),
         slider({ label: 'Opacity', min: 0.1, max: 1, step: 0.05, value: bs.opacity, resetTo: 1, format: (v) => `${Math.round(v * 100)}%`, onInput: (v) => { bs.opacity = v; app.changed({ preview: false }); } }),
@@ -145,7 +144,7 @@ export default {
   selectedPanel(app, kind) {
     const f = activeFile();
     const it = (f?.items || []).find((x) => x.id === app.selectedItem());
-    if (!it || it.kind !== kind) return h('p', { class: 'hint' }, kind === 'text' ? 'Select a text on the photo to edit it.' : 'Select one on the photo to change it.');
+    if (!it || it.kind !== kind) return h('p', { class: 'hint' }, kind === 'text' ? 'Select a text on the photo to edit it.' : 'Select one on the photo to edit it.');
     const upd = (k, opts) => (v) => { it[k] = v; app.changed(opts); };
     const parts = [];
     if (kind === 'text') {
@@ -187,7 +186,7 @@ export default {
         h('button', { type: 'button', class: 'icon-btn layer-btn', 'aria-label': `Send ${itemLabel(it)} backward`, title: 'Backward', disabled: i === 0, onclick: () => app.moveItem(it.id, -1) }, icon('arrowDown', 14)),
         h('button', { type: 'button', class: 'chip-x', 'aria-label': `Delete ${itemLabel(it)}`, title: 'Delete', onclick: () => app.removeItem(it.id) }, icon('x', 12))));
     });
-    return group('Layers', list, h('button', { type: 'button', class: 'link-btn', onclick: () => { f.items = []; app.changed({ panel: true }); } }, 'Remove all layers on this photo'));
+    return group('Layers', list, h('button', { type: 'button', class: 'link-btn', onclick: () => { f.items = []; app.changed({ panel: true }); } }, 'Remove all layers'));
   },
 
   sync(app) {

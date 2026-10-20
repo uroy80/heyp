@@ -664,13 +664,13 @@ export function setBackgroundMode(mode) {
     const from = o.format;
     b.autoFrom = from;
     o.format = 'png';
-    return `Export switched from ${FORMAT_LABEL[from] || from} to PNG to keep the transparency.`;
+    return `Switched from ${FORMAT_LABEL[from] || from} to PNG to keep transparency.`;
   }
   const from = b.autoFrom;
   b.autoFrom = null;
   if (from && o.format === 'png') {
     o.format = from;
-    return `Export switched back to ${FORMAT_LABEL[from] || from}.`;
+    return `Switched back to ${FORMAT_LABEL[from] || from}.`;
   }
   return null;
 }
@@ -686,7 +686,7 @@ export function resetBackground() {
 export function exportLimitError(n, limits) {
   const max = limits?.max_files;
   if (!(max > 0) || n <= max) return null;
-  return `Too many photos for one export: ${n} (the limit is ${max}). Remove ${n - max} and export again.`;
+  return `Too many photos (max ${max}) — remove ${n - max} to export.`;
 }
 
 /** One toast line for export warnings: all of them when few, else a count and the first two. */

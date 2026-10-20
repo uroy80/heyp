@@ -36,7 +36,6 @@ export default {
   id: 'meme',
   title: 'Meme',
   icon: 'meme',
-  kicker: 'Top text, bottom text',
 
   isActive: () => memeActive(),
   reset() {
@@ -46,14 +45,14 @@ export default {
   render(root, app) {
     r = {};
     const m = state.meme;
-    append(root, toolHead('Meme', 'Classic top and bottom captions in outlined poster type. Bring your own picture, or start from a blank canvas.', { onReset: () => app.resetTool(this), active: this.isActive() }));
+    append(root, toolHead('Meme', null, { onReset: () => app.resetTool(this), active: this.isActive() }));
     r.top = captionField('Top', m.top, (v) => { m.top = v; app.changed(); });
     r.bottom = captionField('Bottom', m.bottom, (v) => { m.bottom = v; app.changed(); });
     append(root, group(null, r.top, r.bottom,
       toggle({ label: 'ALL CAPS', checked: m.uppercase, onChange: (v) => { m.uppercase = v; app.changed(); } })));
 
     const font = selectField({ label: 'Font', value: m.font, options: FONTS.map((f) => ({ value: f.id, label: f.label })), onChange: (v) => { m.font = v; app.changed(); } });
-    const auto = toggle({ label: 'Fit the text automatically', checked: m.autoSize, onChange: (v) => { m.autoSize = v; app.changed({ panel: true }); } });
+    const auto = toggle({ label: 'Auto-fit text', checked: m.autoSize, onChange: (v) => { m.autoSize = v; app.changed({ panel: true }); } });
     const size = m.autoSize ? null : slider({ label: 'Text size', min: 0.03, max: 0.25, step: 0.005, value: m.size, resetTo: 0.1, format: (v) => `${Math.round(v * 1000) / 10}%`, onInput: (v) => { m.size = v; app.changed(); } });
     const color = swatches({ label: 'Text colour', colors: COLORS, value: m.color, defaultValue: '#ffffff', onChange: (v) => { m.color = v; app.changed(); } });
     const outline = swatches({ label: 'Outline', colors: OUTLINES.map((o) => ({ ...o, value: o.value })), allowCustom: false, value: m.outline, defaultValue: '#000000', onChange: (v) => { m.outline = v; app.changed(); } });
@@ -65,7 +64,7 @@ export default {
       type: 'button', class: 'btn btn-icon-text', title: `${c.w} × ${c.h} px`,
       onclick: () => app.newBlank(c, '#ffffff'),
     }, icon('image', 16), h('span', {}, c.label))));
-    append(root, group('No picture?', h('p', { class: 'hint' }, 'Start from a blank white canvas — it is added to your photos like any other picture.'), r.blank));
+    append(root, group('Blank canvas', r.blank));
   },
 
   sync() {

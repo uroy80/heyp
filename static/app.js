@@ -14,7 +14,7 @@ import { Canvas, isSourceFrame, zoomPivot } from './js/canvas.js';
 import { fitRatio, snapBox } from './js/cropbox.js';
 import { toast, initTheme } from './js/ui.js';
 import { Pending } from './js/pending.js';
-import { slider, toggle, selectField } from './js/controls.js';
+import { slider, toggle, selectField, infoTip } from './js/controls.js';
 import convertTool from './js/tools/convert.js';
 import resizeTool from './js/tools/resize.js';
 import cropTool from './js/tools/crop.js';
@@ -34,7 +34,7 @@ import { Editing, EDIT_STAGE, stageBaseOps } from './js/editing.js';
 import { normalizeDetections, mergeRegions, loupeRegion } from './js/stagekit.js';
 import { jobs } from './js/jobs.js';
 import { startRun, getRun, resultFile, continueMenu } from './js/jobui.js';
-import { copyFor, expiryReason, siblingUrl } from './js/config.js';
+import { copyFor, siblingUrl } from './js/config.js';
 import { continueTargets, outputKind, HEYP_CONTINUE } from './js/continue.js';
 import { FILTERS, FRAMES, adoptEnums } from './js/catalog.js';
 
@@ -44,12 +44,6 @@ const TOOLS = [
   blurTool, editorTool, memeTool, gifTool, htmlTool, infoTool,
 ];
 const SHORTCUTS = 9;
-/** Section kickers above each tool headline ("04 · Passport & ID"). */
-const KICKER = {
-  convert: 'File format', resize: 'Size & print', crop: 'Framing', passport: 'Passport & ID',
-  compress: 'File size', edit: 'Orientation & tone', background: 'Cut-out', info: 'Inside the file',
-};
-const kickerOf = (t) => t.kicker || KICKER[t.id] || t.title;
 const UNDO_MS = 8000;
 const NARROW = window.matchMedia('(max-width: 780px)');
 const REDUCE_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -273,7 +267,8 @@ function refreshPanel() {
   el.panel.replaceChildren();
   el.panel.setAttribute('aria-labelledby', 'tool-title');
   tool.render(el.panel, app);
-  el.panel.querySelector('.tool-head')?.prepend(h('p', { class: 'tool-kicker' }, `${String(TOOLS.indexOf(tool) + 1).padStart(2, '0')} · ${kickerOf(tool)}`));
+  // the section number as the kicker ("04"), like the rail
+  el.panel.querySelector('.tool-head')?.prepend(h('p', { class: 'tool-kicker' }, String(TOOLS.indexOf(tool) + 1).padStart(2, '0')));
   renderedTool = tool.id;
   el.panel.querySelectorAll('details').forEach((d, i) => { if (open[i]) d.open = true; });
   el.panel.scrollTop = scroll;
@@ -757,13 +752,13 @@ function restoreFile(id) {
   thumbEls.get(id)?.firstElementChild.focus({ preventScroll: true });
 }
 
-/** Server forgot these files (TTL / restart): drop them and tell the user to re-add. */
+/** Server forgot these files (expired, removed or a restart): drop them and tell the user to re-add. */
 function expire(files) {
   const list = files.filter((f) => state.files.includes(f));
   if (!list.length) return;
   dropFiles(list.map((f) => f.id));
   const what = list.length === 1 ? `“${list[0].name}” is` : `${list.length} photos are`;
-  toast(`${what} no longer on the server (${expiryReason(state.config)}). Add ${list.length === 1 ? 'it' : 'them'} again to keep working.`, 'warn', { timeout: 10000 });
+  toast(`${what} no longer available — add ${list.length === 1 ? 'it' : 'them'} again.`, 'warn', { timeout: 10000 });
 }
 
 function handleFileError(e, f) {
@@ -807,7 +802,7 @@ function hideUpload() {
 async function addFiles(list) {
   const picked = [...(list || [])].filter((f) => f && f.size > 0);
   if (!picked.length) {
-    toast('Nothing to add — drop or choose image files.', 'warn');
+    toast('Nothing to add — choose image files.', 'warn');
     return;
   }
   // files over the server's limit are refused here instead of after uploading them
@@ -865,7 +860,7 @@ function reportUploadErrors(errors) {
     errors = errors.filter((e) => !pdfs.includes(e));
     const sibling = siblingUrl(state.config);
     const what = pdfs.length === 1 ? `“${pdfs[0].name}” is a PDF` : `${pdfs.length} files are PDFs`;
-    toast(`${what} — heyp opens images only.${sibling ? ' heypdf, a separate site, has the PDF tools: add the file there.' : ''}`, 'warn', {
+    toast(`${what}${sibling ? '.' : ' — heyp opens images only.'}`, 'warn', {
       timeout: 10000,
       action: sibling ? { label: 'Open heypdf', onClick: () => window.open(sibling, '_blank', 'noopener') } : undefined,
     });
@@ -1094,12 +1089,12 @@ function exportNotes() {
   const files = state.files;
   if (upscaleActive() && files.length > 1) {
     const bad = upscaleProblems(files, upscaleInputDims);
-    if (bad.length) notes.push(`${bad.length} photo${bad.length > 1 ? 's are' : ' is'} too large for ${state.upscale.factor}×`);
+    if (bad.length) notes.push(`${bad.length} too large for ${state.upscale.factor}×`);
   }
   const stills = stillAnimations(files);
   // named when it isn't the photo on screen ("This photo: …" sits right before this note)
   const which = stills.length > 1 ? `${stills.length} animations` : files.length > 1 ? `“${stills[0]?.name}”` : 'The animation';
-  if (stills.length) notes.push(`${which} will keep only the first frame in ${FORMAT_LABEL[state.output.format] || state.output.format} — choose GIF, WebP or Same as original to keep ${stills.length > 1 ? 'them' : 'it'} moving`);
+  if (stills.length) notes.push(`${which}: first frame only in ${FORMAT_LABEL[state.output.format] || state.output.format} — pick GIF or WebP to keep ${stills.length > 1 ? 'them' : 'it'} moving`);
   return notes;
 }
 
@@ -1156,7 +1151,7 @@ async function download() {
     const bad = upscaleProblems(files, upscaleInputDims);
     if (bad.length) {
       const names = bad.slice(0, 3).map((x) => `“${x.file.name}”`).join(', ') + (bad.length > 3 ? ` and ${bad.length - 3} more` : '');
-      toast(`${names} ${bad.length > 1 ? 'are' : 'is'} too large for a ${state.upscale.factor}× upscale. Choose 2×, or crop or resize ${bad.length > 1 ? 'them' : 'it'} first.`, 'error', { timeout: 10000 });
+      toast(`Too large for ${state.upscale.factor}×: ${names}. Choose 2× or make ${bad.length > 1 ? 'them' : 'it'} smaller.`, 'error', { timeout: 10000 });
       return;
     }
   }
@@ -1423,8 +1418,8 @@ function renderStageBase(f) {
 }
 
 function exportBusyText(files) {
-  if (hasHeavyOps(files)) return files.length > 1 ? `Upscaling ${files.length} photos… this takes a while` : 'Upscaling… this can take a minute';
-  if (hasJobOps(files)) return files.length > 1 ? `Working on ${files.length} photos… this takes a while` : 'Removing the background…';
+  if (hasHeavyOps(files)) return files.length > 1 ? `Upscaling ${files.length} photos…` : 'Upscaling…';
+  if (hasJobOps(files)) return files.length > 1 ? `Working on ${files.length} photos…` : 'Removing background…';
   return files.length > 1 ? `Exporting ${files.length} photos…` : 'Exporting…';
 }
 
@@ -1434,8 +1429,8 @@ function buildSectionIndex() {
   const dlg = el.help;
   let list = dlg.querySelector('.section-index');
   if (!list) {
-    list = h('ol', { class: 'section-index', 'aria-label': 'Every section' });
-    dlg.append(h('div', { class: 'section-index-wrap' }, h('h3', { class: 'group-title' }, 'Every section'), list));
+    list = h('ol', { class: 'section-index', 'aria-label': 'Sections' });
+    dlg.append(h('div', { class: 'section-index-wrap' }, h('h3', { class: 'group-title' }, 'Sections'), list));
   }
   list.replaceChildren(...TOOLS.map((t, i) => h('li', {},
     h('button', {
@@ -1459,7 +1454,7 @@ function editorCatalog() {
     frames: frIds ? adoptEnums(FRAMES, ['none', ...frIds.filter((x) => x !== 'none')]) : FRAMES,
     stickers,
     stickersLoading: cat === undefined,
-    stickerCredit: stickers.some((s) => s.source === 'openmoji') ? 'Emoji stickers by OpenMoji (CC BY-SA 4.0) — see Credits.' : '',
+    stickerCredit: stickers.some((s) => s.source === 'openmoji') ? 'Emoji by OpenMoji (CC BY-SA 4.0).' : '',
   };
 }
 
@@ -1478,12 +1473,12 @@ const LOGO_TYPES = /^image\/(png|webp|svg\+xml|jpeg|gif|avif)$/;
 async function uploadAux(file) {
   if (!file) return null;
   if (file.type && !LOGO_TYPES.test(file.type)) {
-    toast('Choose a PNG, SVG, WebP, JPG, GIF or AVIF image for the logo.', 'error');
+    toast('Use a PNG, SVG, WebP, JPG, GIF or AVIF logo.', 'error');
     return null;
   }
   const max = state.limits?.max_upload_mb > 0 ? state.limits.max_upload_mb : 25;
   if (file.size > Math.min(max, 25) * 1024 * 1024) {
-    toast(`That logo is too large (max ${Math.min(max, 25)} MB).`, 'error');
+    toast(`Logo too large (max ${Math.min(max, 25)} MB).`, 'error');
     return null;
   }
   try {
@@ -1511,7 +1506,7 @@ function auxExpired(kind) {
   if (kind !== 'watermark' || !state.watermark.imageId) return;
   auxFiles.delete(state.watermark.imageId);
   Object.assign(state.watermark, { imageId: null, imageName: '', imageW: 0, imageH: 0 });
-  toast('The watermark logo is no longer on the server. Choose it again.', 'warn');
+  toast('Logo no longer available — choose it again.', 'warn');
   changed({ panel: true });
 }
 
@@ -1578,7 +1573,7 @@ async function detect({ what, all = false }) {
   if (kinds.includes('plates')) parts.push(`${found.plate} plate${found.plate === 1 ? '' : 's'}`);
   if (failed) toast(`Detection failed: ${failed.detail || 'unknown error'}`, 'error');
   else if (missing.size) toast(`${[...missing].map((m) => (m === 'faces' ? 'Face' : 'Plate')).join(' and ')} detection isn’t installed on this server.`, 'warn');
-  else toast(found.face + found.plate ? `Found ${parts.join(' and ')}${all ? ` in ${files.length} photos` : ''}. Untick any you want to keep visible.` : `No new ${parts.map((p) => p.replace(/^\d+ /, '')).join(' or ')} found — draw a box over anything else.`);
+  else toast(found.face + found.plate ? `Found ${parts.join(' and ')}${all ? ` in ${files.length} photos` : ''}. Untick any to keep visible.` : `No new ${parts.map((p) => p.replace(/^\d+ /, '')).join(' or ')} found — draw a box instead.`);
 }
 
 // ── editor layers ───────────────────────────────────────────────────────────
@@ -1834,29 +1829,19 @@ function syncContinue() {
 function applyCopy(c) {
   document.body.classList.remove('copy-pending', 'copy-unknown');
   document.body.classList.toggle('is-hosted', c.mode === 'hosted');
-  const pill = $('.local-pill');
-  if (pill) {
-    pill.textContent = c.pill;
-    pill.title = c.pillTitle;
-  }
-  // the dateline's one factual line (how long files are kept), from the configured TTLs
-  const edition = $('.dateline-edition');
-  if (edition) edition.textContent = c.dateline;
   // the "heyp · heypdf" switch: a plain link to the sibling site when this deployment names one
   const sibling = siblingUrl(state.config);
   const link = $('.sibling-link[data-app="heypdf"]');
   if (link && sibling) link.href = sibling;
   for (const node of document.querySelectorAll('.sibling-dot, .sibling-link[data-app="heypdf"]')) node.hidden = !sibling;
-  const lede = $('.dz-lede');
-  if (lede) lede.textContent = c.lede;
+  document.body.classList.toggle('no-sibling', !sibling); // the dateline folds to its two rules
   // the policy pages open in a new tab: leaving this page deletes the photos it holds (UIH-08)
   const doc = (href, label) => h('a', { href, target: '_blank', rel: 'noopener' }, label);
-  const priv = $('.dz-privacy');
-  if (priv) {
-    // one run of text (the line is a flex row: the shield, then the words)
-    priv.replaceChildren(icon('shield', 15), h('span', {}, `${c.privacy}. `,
-      ...(c.privacyNote ? [`${c.privacyNote} `, doc('/terms', 'Terms'), ' and ', doc('/privacy', 'Privacy policy'), '.']
-        : [doc('/privacy', 'Privacy')])));
+  const consent = $('.dz-consent');
+  if (consent) {
+    // hosted only: the one legal line under the upload button
+    consent.hidden = !c.consent;
+    consent.replaceChildren(...(c.consent ? [`${c.consent} `, doc('/terms', 'Terms'), ' and ', doc('/privacy', 'Privacy policy'), '.'] : []));
   }
   const foot = $('#colophon-links');
   if (foot) foot.replaceChildren(...c.footer.map((l) => doc(l.href, l.label)));
@@ -1876,7 +1861,7 @@ async function loadV2() {
   if (cfg.status === 'rejected' && cfg.reason?.status !== 404) {
     // couldn't ask (offline, server error): make no claim either way rather than risk a false "Local only"
     document.body.classList.remove('copy-pending');
-    document.body.classList.add('copy-unknown');
+    document.body.classList.add('copy-unknown', 'no-sibling');
   } else {
     applyCopy(copyFor(state.config)); // 404 = a server older than /api/config, which is always self-hosted
   }
@@ -1891,7 +1876,7 @@ async function loadV2() {
 function decorate() {
   $('.add-icon').replaceWith(icon('plus', 16));
   $('.dz-icon').append(icon('image', 40));
-  $('.dz-shield').replaceWith(icon('shield', 15));
+  $('.dz-formats').append(' ', infoTip('HEIC, HEIF, JPG, PNG, WebP, AVIF, TIFF, BMP, GIF, ICO, JPEG 2000, PSD, PSB, SVG and camera RAW (DNG, CR2, CR3, NEF, ARW, RAF, ORF, RW2, PEF, SRW).', { label: 'All supported formats' }));
   $('.compare-icon').replaceWith(icon('compare', 16));
   $('#help-btn').append(icon('keyboard', 18));
   $('#help-close').append(icon('x', 16));
@@ -1899,10 +1884,6 @@ function decorate() {
   $('#help-close').addEventListener('click', () => el.help.close());
   el.help.addEventListener('click', (e) => { if (e.target === el.help) el.help.close(); });
   if (IS_MAC) for (const k of document.querySelectorAll('.kbd-mod')) k.textContent = '⌘';
-  const today = new Date();
-  const date = $('#dateline-date');
-  date.textContent = new Intl.DateTimeFormat(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(today);
-  date.dateTime = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   initTheme($('#theme-btn'));
 }
 

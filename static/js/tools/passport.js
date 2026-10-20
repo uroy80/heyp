@@ -89,7 +89,7 @@ export const replaceAllowed = (preset) => preset?.background_edit_allowed !== fa
 /** "<Country> rules don't allow digitally altered backgrounds …" for presets that forbid it, else null. */
 export function backgroundRule(preset) {
   if (replaceAllowed(preset)) return null;
-  return `${countryName(preset.country)} rules don’t allow digitally altered backgrounds — photograph against a plain light wall instead.`;
+  return `${countryName(preset.country)} rules don’t allow digitally altered backgrounds — shoot against a plain light wall.`;
 }
 
 /** Point a passport state object at a preset, applying the preset's background rule. */
@@ -150,7 +150,7 @@ export default {
   render(root, app) {
     r = {};
     const p = state.passport;
-    append(root, toolHead('Passport photo', 'Face-aware framing to official head-size rules, a clean background and print-ready sheets.', { onReset: () => app.resetTool(this), active: this.isActive() }));
+    append(root, toolHead('Passport photo', null, { onReset: () => app.resetTool(this), active: this.isActive() }));
 
     if (state.presetsError) {
       append(root, note(`Couldn’t load presets: ${state.presetsError}`, 'warn'),
@@ -178,7 +178,7 @@ export default {
     };
 
     const search = h('input', {
-      type: 'search', class: 'input input-search', placeholder: 'Search country or document…', value: query,
+      type: 'search', class: 'input input-search', placeholder: 'Search countries…', value: query,
       'aria-label': 'Search presets', 'aria-controls': 'pp-select', autocomplete: 'off',
       oninput: () => {
         query = search.value;
@@ -193,7 +193,7 @@ export default {
       },
     });
     r.select = selectField({ label: 'Country & document', id: 'pp-select', ...presetSelectModel(query, p.preset), onChange: pick });
-    r.empty = h('p', { class: 'hint', hidden: matches() > 0 }, 'No presets match — try a country name or “visa”.');
+    r.empty = h('p', { class: 'hint', hidden: matches() > 0 }, 'No match.');
 
     const preset = p.preset === 'custom' ? null : findPreset(p.preset);
     const dims = passportDims();
@@ -202,7 +202,7 @@ export default {
       h('strong', {}, `${fmtNum(preset.width_mm, 1)} × ${fmtNum(preset.height_mm, 1)} mm`),
       dims ? h('span', { class: 'muted' }, ` · ${dims.w}\u00a0×\u00a0${dims.h}\u00a0px · ${preset.dpi}\u00a0DPI`) : null) : null;
     const rules = preset && (preset.notes || safeUrl(preset.source)) ? h('details', { class: 'disclosure pp-rules' },
-      h('summary', {}, 'Rules for this document'),
+      h('summary', {}, 'Official rules'),
       preset.notes ? h('p', { class: 'preset-notes' }, preset.notes) : null,
       safeUrl(preset.source) ? h('a', { class: 'ext-link', href: safeUrl(preset.source), target: '_blank', rel: 'noopener noreferrer' }, 'Official spec', h('span', { 'aria-hidden': 'true' }, ' ↗'), h('span', { class: 'sr-only' }, ' (opens in a new tab)')) : null) : null;
     let custom = null;
@@ -212,9 +212,8 @@ export default {
       custom = h('div', { class: 'preset-card' }, h('div', { class: 'grid-3' },
         numberField({ label: 'Width', value: c.width_mm, suffix: 'mm', min: 10, max: 300, onChange: upd('width_mm') }),
         numberField({ label: 'Height', value: c.height_mm, suffix: 'mm', min: 10, max: 300, onChange: upd('height_mm') }),
-        numberField({ label: 'DPI', value: c.dpi, step: 1, min: 72, max: 2400, onChange: upd('dpi') })),
-      h('p', { class: 'hint' }, 'Head height defaults to about 50–69 % of the photo, like most ICAO-style specs.'));
-      r.customHint = note('Enter a width, height and DPI to apply the custom size.', 'warn');
+        numberField({ label: 'DPI', value: c.dpi, step: 1, min: 72, max: 2400, onChange: upd('dpi'), tip: 'The head fills about 50–69 % of the height, like most ICAO-style specs.' })));
+      r.customHint = note('Enter width, height and DPI.', 'warn');
       append(custom, r.customHint);
     }
 
@@ -231,7 +230,7 @@ export default {
         icon('passport', 18), h('span', {}, 'Make passport photo'));
       // picker + action first so they sit above the pinned Export block; quick picks and search below
       append(root,
-        group('Choose your document', r.select, dimsLine, custom, r.make, chips, search, r.empty),
+        group('Document', r.select, dimsLine, custom, r.make, chips, search, r.empty),
         rules);
       this.sync(app);
       return;
@@ -243,8 +242,8 @@ export default {
     const bg = swatches({ label: 'Colour', colors: BACKGROUNDS, value: p.background ?? defBg, defaultValue: defBg, onChange: (v) => { p.background = v; app.changed(); } });
     const replace = toggle({
       label: 'Replace background', checked: p.replace && seg, disabled: !seg,
-      hint: !seg ? 'Needs the segmentation model, which isn’t available in this build — the original background is kept.'
-        : rule ? 'Off by default for this document.' : 'Cuts out the person and puts them on the colour above.',
+      hint: !seg ? 'Not available on this server; the original background is kept.'
+        : rule ? 'Off by default for this document.' : 'Puts the person on the colour above.',
       onChange: (v) => { p.replace = v; app.changed(); },
     });
     const ruleNote = rule && seg ? note(rule, 'warn') : null;
@@ -254,12 +253,11 @@ export default {
     r.zoom = slider({ label: 'Head size', min: 0.85, max: 1.15, step: 0.005, value: p.zoom, resetTo: 1, format: (v) => `${Math.round(v * 100)}%`, onInput: (v) => { p.zoom = v; app.changed(); } });
     r.vpos = slider({ label: 'Vertical position', min: -0.25, max: 0.25, step: 0.005, value: -p.offsetY, resetTo: 0, format: vpos, onInput: (v) => { p.offsetY = -v; app.changed(); } });
     r.hpos = slider({ label: 'Horizontal position', min: -0.25, max: 0.25, step: 0.005, value: p.offsetX, resetTo: 0, format: hpos, onInput: (v) => { p.offsetX = v; app.changed(); } });
-    const tune = group('Fine-tune',
-      h('p', { class: 'hint pp-drag-hint' }, 'Drag the photo to move it under the frame, pinch or Ctrl + scroll to resize the head, double-click to reset.'),
+    const tune = group({ title: 'Fine-tune', tip: 'Or drag the photo under the frame; pinch or Ctrl + scroll resizes the head; double-click resets.' },
       r.zoom, r.vpos, r.hpos,
       toggle({ label: 'Level head', checked: p.level !== false, hint: 'Straightens a tilted head (1–15°) using the eye line.', onChange: (v) => { p.level = v; app.changed(); } }));
 
-    r.guides = toggle({ label: 'Show guides', checked: p.guides !== false, hint: 'Crown, chin and eye lines with the allowed ranges, drawn over the photo.', onChange: (v) => { p.guides = v; app.changed({ preview: false }); } });
+    r.guides = toggle({ label: 'Show guides', checked: p.guides !== false, hint: 'Crown, chin and eye lines with the allowed ranges.', onChange: (v) => { p.guides = v; app.changed({ preview: false }); } });
     r.measure = h('div', { class: 'readout pp-measure', 'aria-live': 'polite' });
     const check = group('Check', r.measure, r.guides);
 
@@ -283,7 +281,7 @@ export default {
       out,
       group('Background', bg, replace, ruleNote),
       check, tune, rules,
-      h('button', { type: 'button', class: 'link-btn', onclick: () => { p.on = false; p.dismissed = true; app.changed({ panel: true }); } }, 'Turn off passport framing'));
+      h('button', { type: 'button', class: 'link-btn', onclick: () => { p.on = false; p.dismissed = true; app.changed({ panel: true }); } }, 'Turn off passport'));
     this.sync(app);
   },
 
@@ -301,6 +299,6 @@ export default {
     r.measure.replaceChildren(...rows.map((x) => h('div', { class: 'readout-row' },
       h('span', { class: 'muted' }, x.label),
       h('span', {}, h('strong', { class: x.ok ? 'ok' : 'warn' }, x.value, x.ok ? ' ✓' : ''), x.spec ? h('span', { class: 'muted' }, `\u2002·\u2002${x.note ? '' : 'spec '}${x.spec}`) : null))));
-    if (!single) append(r.measure, h('p', { class: 'readout-line' }, 'Measurements and guides show for a single photo.'));
+    if (!single) append(r.measure, h('p', { class: 'readout-line' }, 'Checks show for a single photo.'));
   },
 };

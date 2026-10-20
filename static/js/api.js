@@ -21,9 +21,9 @@ export class ApiError extends Error {
  * replied instead of heyp: too large a request, or the server took longer than the proxy waits. Null otherwise.
  */
 export function edgeMessage(status) {
-  if (status === 413) return 'This upload is larger than the site accepts in one request. Try fewer or smaller files.';
-  if (status === 502 || status === 504 || (status >= 520 && status <= 524)) return 'The server took too long to answer. Try fewer photos or a smaller size, or try again in a moment.';
-  if (status === 503) return 'The server is busy. Try again in a moment.';
+  if (status === 413) return 'Upload larger than the site accepts — try fewer or smaller files.';
+  if (status === 502 || status === 504 || (status >= 520 && status <= 524)) return 'The server took too long — try fewer or smaller photos.';
+  if (status === 503) return 'The server is busy — try again in a moment.';
   return null;
 }
 
@@ -72,7 +72,7 @@ async function errorFrom(res) {
   } catch {
     /* not JSON */
   }
-  const fallback = res.status === 404 ? 'File not found — it may have expired' : edgeMessage(res.status) || `${res.status} ${res.statusText || 'error'}`;
+  const fallback = res.status === 404 ? 'File not found — add it again' : edgeMessage(res.status) || `${res.status} ${res.statusText || 'error'}`;
   const retry = res.status === 503 ? retryAfterSeconds(res.headers.get('Retry-After')) : null;
   const useJob = /^[a-z]+\.[a-z0-9_]+$/.test(res.headers.get('X-Heyp-Use-Job') || '') ? res.headers.get('X-Heyp-Use-Job') : null;
   return new ApiError(res.status, formatDetail(body?.detail, fallback), body, retry, useJob);

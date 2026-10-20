@@ -2,13 +2,13 @@
 // OPS-4, OPS-5, OPS-14, COPY-HEYP). Pure modules only — no DOM.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 import {
   state, defaults, buildOps, blurOp, planUploads, requestChunkBytes, DEFAULT_REQUEST_MB, JOB_OPS, exportNeedsJob, hasJobOps,
   upscaleProblems, upscaleInputDims, stillAnimations, PIXELATE_MIN,
 } from '../js/state.js';
-import { copyFor, sourceLink, expiryReason, retention, OFFLINE } from '../js/config.js';
+import { copyFor, sourceLink, OFFLINE } from '../js/config.js';
 import { api, edgeMessage, ApiError } from '../js/api.js';
 import { deleteKeyAction } from '../js/keys.js';
 import { keepFiles, savingRows, compressMode, keepOptions, KEEP_FORMATS } from '../js/tools/compress.js';
@@ -119,33 +119,59 @@ test('COPY-HEYP: copy in both modes is built from /api/config and makes no unver
   const hosted = copyFor({ mode: 'hosted', ttl_minutes: 60, hard_ttl_minutes: 240, source_url: 'https://github.com/uroy80/heyp' });
   const local = copyFor({ mode: 'local', ttl_minutes: 90, hard_ttl_minutes: 0 });
   for (const c of [hosted, local, copyFor(null)]) assert.ok(!BANNED.test(JSON.stringify(c)), JSON.stringify(c));
-  assert.equal(hosted.pill, 'Auto-delete');
-  assert.equal(hosted.dateline, 'Files deleted 1 hour after last use · 4 hours at most');
-  assert.equal(local.dateline, 'Files deleted 90 minutes after last use');
-  assert.match(hosted.renderNote, /may remain in our server logs/, 'UIH-07: the egress log keeps host names');
   assert.match(hosted.bgHint, /isn’t sent to an AI service/);
-  assert.equal(retention({ ttl_minutes: 'x' }), null);
+  assert.match(hosted.consent, /agree/);
+  assert.equal(local.consent, null, 'self-hosted copies print no consent line');
 });
 
-test('UIH-06: the close-tab promise is worded as what the page does, not a guarantee', () => {
-  const c = copyFor({ mode: 'hosted', ttl_minutes: 60, hard_ttl_minutes: 240 });
-  assert.match(c.pillTitle, /Closing the tab also asks the server to delete the photos and results of this page/);
+// ── COPY-PASS: how long files are kept is told on /privacy only, never in the app's UI ─────────────────────
+
+const RETENTION = /auto-delete|deleted (after|automatically|\d)|files are deleted|after (you )?last use|kept for|\b\d+ (minutes?|hours?)\b|no longer on the server|may remain in our server logs/i;
+/** A source file with its comments removed: only what can reach the page is checked. */
+const code = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\s\/\/ .*$/gm, '');
+
+test('COPY-PASS: the page copy never states how long files are kept, whatever the configured TTLs', () => {
+  for (const cfg of [null, { mode: 'local', ttl_minutes: 60 }, { mode: 'hosted', ttl_minutes: 60, hard_ttl_minutes: 240 }]) {
+    const c = JSON.stringify(copyFor(cfg));
+    assert.ok(!RETENTION.test(c), c);
+    assert.ok(!/ttl|60|240/i.test(c.replace(/AGPL-3\.0|uroy80/g, '')), c);
+  }
+});
+
+test('COPY-PASS: no retention wording in index.html, the stylesheet or any UI module, and no UI code reads the TTLs', () => {
+  const files = ['../index.html', '../styles.css', '../app.js', ...readdirSync(new URL('../js/', import.meta.url)).filter((f) => f.endsWith('.js')).map((f) => `../js/${f}`),
+    ...readdirSync(new URL('../js/tools/', import.meta.url)).map((f) => `../js/tools/${f}`)];
+  for (const f of files) {
+    const src = code(read(f));
+    assert.ok(!RETENTION.test(src), `${f}: ${src.match(RETENTION)?.[0]}`);
+    assert.ok(!/ttl_minutes|hard_ttl/.test(src), `${f} reads the configured TTLs`);
+  }
+  const html = read('../index.html');
+  assert.doesNotMatch(html, /local-pill|dateline-edition|dateline-date/, 'no badge, retention line or date in the masthead');
+});
+
+test('UIH-06: closing the tab still deletes this page\'s uploads and results', () => {
   assert.match(read('../app.js'), /for \(const id of resultFiles\) if \(!state\.files\.some/, 'pagehide deletes job results too');
-});
-
-test('UIH-05: the expiry toast names the real reasons for this deployment', () => {
-  assert.match(expiryReason({ mode: 'hosted', ttl_minutes: 60, hard_ttl_minutes: 240 }), /1 hour after last use and 4 hours after upload at the latest/);
-  assert.match(expiryReason({ mode: 'local', ttl_minutes: 60 }), /1 hour after last use; a server restart/);
-  assert.match(expiryReason(null), /restart/);
 });
 
 test('UIH-05: no edition labels or "Local only" pill ship in the page or the stylesheet', () => {
   const css = read('../styles.css');
   assert.ok(!/--edition|Late edition|Web edition|Local edition/.test(css), 'edition labels in styles.css');
-  assert.match(css, /\.copy-pending \.dateline-edition, \.copy-unknown \.dateline-edition \{ visibility: hidden; \}/);
   const html = read('../index.html');
   assert.ok(!BANNED.test(html.replace(/<!--[\s\S]*?-->/g, '')), 'index.html copy');
-  assert.match(html, /<span class="local-pill"><\/span>/);
+});
+
+test('COPY-PASS: panels carry a title and at most one short line; explanations sit behind an "i" button', () => {
+  for (const f of readdirSync(new URL('../js/tools/', import.meta.url))) {
+    const src = read(`../js/tools/${f}`);
+    for (const m of src.matchAll(/toolHead\('[^']*', '([^']*)'/g)) {
+      assert.ok(m[1].split(/\s+/).length <= 6, `${f}: standfirst "${m[1]}" is longer than six words`);
+    }
+    assert.doesNotMatch(src, /kicker:/, `${f}: long kickers are gone (the number is the kicker)`);
+  }
+  const controls = read('../js/controls.js');
+  assert.match(controls, /'aria-describedby': id/, 'the tip button is described by its note');
+  assert.match(controls, /e\.key !== 'Escape'/, 'Esc closes a tip');
 });
 
 // ── UIH-07 / OPS-14 / UIH-08 / UIH-09: links ─────────────────────────────────────────────────────────────────

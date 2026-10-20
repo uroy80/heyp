@@ -11,7 +11,6 @@ export default {
   id: 'upscale',
   title: 'Upscale',
   icon: 'upscale',
-  kicker: 'Bigger & sharper',
 
   isActive: () => upscaleActive(),
   reset() {
@@ -21,13 +20,13 @@ export default {
   render(root, app) {
     r = {};
     const u = state.upscale;
-    append(root, toolHead('Upscale', 'Enlarge photos 2× or 4× with an AI model that adds detail instead of blur. It runs when you download.', { onReset: () => app.resetTool(this), active: this.isActive() }));
+    append(root, toolHead('Upscale', 'Runs when you download.', { onReset: () => app.resetTool(this), active: this.isActive() }));
     if (state.features.upscale === false) {
-      append(root, note('The upscale model isn’t installed on this server.', 'warn'));
+      append(root, note('Not available on this server.', 'warn'));
       return;
     }
     if (passportActive()) {
-      append(root, note('Passport photos have a fixed size, so Upscale is off while Passport framing is on.', 'warn'));
+      append(root, note('Off while Passport is on.', 'warn'));
       return;
     }
     r.factor = segmented({
@@ -36,28 +35,25 @@ export default {
       onChange: (v) => { u.factor = Number(v); app.changed({ panel: true }); },
     });
     r.model = segmented({
-      label: 'Model', cols: 2, value: u.model,
+      label: 'Model', cols: 2, value: u.model, tip: 'Balanced keeps natural texture (hair, fabric, foliage) — best for most photos. Strong gives the cleanest edges and removes JPEG blocks and noise.',
       options: [{ value: 'balanced', label: 'Balanced' }, { value: 'strong', label: 'Strong' }],
       onChange: (v) => { u.model = v; app.changed(); },
     });
-    r.modelHint = h('p', { class: 'hint' });
     r.plan = h('div', { class: 'readout', 'aria-live': 'polite' });
     r.limit = note('', 'warn');
     r.before = h('div', { class: 'loupe-pane loupe-before', role: 'img', 'aria-label': 'Before: the square, enlarged by the browser' });
     r.afterImg = h('img', { alt: 'After: the square, upscaled by the model', decoding: 'async' });
     r.after = h('div', { class: 'loupe-pane loupe-after' }, r.afterImg, h('span', { class: 'loupe-wait', 'aria-hidden': 'true' }));
     r.loupeState = h('p', { class: 'hint loupe-state', 'aria-live': 'polite' });
-    r.detail = group('Detail check',
+    r.detail = group({ title: 'Detail check', tip: 'Drag the square on the photo to check another spot.' },
       h('div', { class: 'loupe' },
         h('figure', {}, r.before, h('figcaption', {}, 'Before')),
         h('figure', {}, r.after, h('figcaption', {}, 'After'))),
-      r.loupeState,
-      h('p', { class: 'hint' }, 'Drag the square on the photo to check another spot.'));
+      r.loupeState);
     append(root,
       group(null, r.factor),
-      group(null, r.model, r.modelHint),
-      r.plan, r.limit, r.detail,
-      h('p', { class: 'hint' }, `Upscaling is heavy work: a large photo can take several minutes, depending on the server. ${app.canApplyEdits?.() ? 'Download runs it on the server and shows the progress on the button.' : 'Download waits until the file is ready.'}`));
+      group(null, r.model),
+      r.plan, r.limit, r.detail);
     this.sync(app);
   },
 
@@ -66,9 +62,6 @@ export default {
     const u = state.upscale;
     r.factor.set(String(u.factor));
     r.model.set(u.model);
-    r.modelHint.textContent = u.model === 'strong'
-      ? 'Strong: the cleanest edges; removes JPEG blocks and noise, smooths fine texture.'
-      : 'Balanced: keeps more natural texture (hair, fabric, foliage). Best for most photos.';
     const dims = app.upscaleInput();
     const plan = upscalePlan(dims, u.factor);
     r.plan.replaceChildren();
@@ -80,13 +73,13 @@ export default {
     r.limit.hidden = !plan || plan.ok;
     if (plan && !plan.ok) {
       r.limit.querySelector('span').textContent = !plan.inOk
-        ? `This photo is ${fmtNum(plan.inMp, 1)} MP — Upscale takes photos up to ${fmtNum(plan.maxInMp, 1)} MP on this server. Crop or resize it first.`
-        : `${u.factor}× would make ${fmtNum(plan.mp, 1)} MP — over this server’s ${fmtNum(plan.maxMp, 0)} MP limit. Choose 2×, crop, or resize the photo first.`;
+        ? `Too large (${fmtNum(plan.inMp, 1)} MP, max ${fmtNum(plan.maxInMp, 1)} MP) — crop or resize first.`
+        : `${u.factor}× makes ${fmtNum(plan.mp, 1)} MP (max ${fmtNum(plan.maxMp, 0)}) — choose 2× or make it smaller.`;
     }
     r.detail.hidden = !(u.factor > 1);
     const view = app.loupeView();
     if (!view) {
-      r.loupeState.textContent = app.hasFiles() ? '' : 'Add a photo to check the detail.';
+      r.loupeState.textContent = app.hasFiles() ? '' : 'Add a photo first.';
       return;
     }
     // before: the same square of the photo, enlarged by the browser
@@ -99,6 +92,6 @@ export default {
     if (view.afterSrc && r.afterImg.getAttribute('src') !== view.afterSrc) r.afterImg.src = view.afterSrc;
     r.afterImg.hidden = !view.afterSrc;
     r.after.classList.toggle('is-pending', Boolean(view.pending));
-    r.loupeState.textContent = view.error ? `Detail check failed: ${view.error}` : view.pending ? 'Rendering the detail…' : '';
+    r.loupeState.textContent = view.error ? `Failed: ${view.error}` : view.pending ? 'Rendering…' : '';
   },
 };

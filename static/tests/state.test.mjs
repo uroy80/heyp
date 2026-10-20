@@ -178,7 +178,7 @@ test('C7: uploads are pre-validated against /api/health limits', () => {
 
 test('C7: an export with more photos than the server takes per request is refused before sending', () => {
   assert.equal(exportLimitError(200, { max_files: 200 }), null);
-  assert.match(exportLimitError(203, { max_files: 200 }), /203.*limit is 200.*Remove 3/);
+  assert.match(exportLimitError(203, { max_files: 200 }), /max 200.*remove 3/);
   assert.equal(exportLimitError(5000, null), null); // limits unknown: let the server decide
 });
 

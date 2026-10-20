@@ -40,10 +40,10 @@ export default {
   reset() {},
 
   render(root, app) {
-    append(root, toolHead('Info', 'What’s inside the file: dimensions, print size, colour profile, camera and location data.'));
+    append(root, toolHead('Info', null));
     const f = activeFile();
     if (!f) {
-      append(root, note('Add a photo to see its details.', 'info'));
+      append(root, note('Add a photo first.', 'info'));
       return;
     }
     const body = h('div', { class: 'info-body' });
@@ -89,15 +89,15 @@ function renderInfo(body, info, complete) {
     row('Colour', [info.icc || 'No profile (sRGB assumed)', info.mode ? ` · ${info.mode}` : '', info.bit_depth ? ` · ${info.bit_depth}-\u2060bit` : ''].join('')),
     row('Transparency', info.has_alpha ? 'Yes' : 'No'),
     row('DPI', dpi ? `${fmtNum(dpi[0], 1)} × ${fmtNum(dpi[1], 1)}` : 'Not set'),
-    row('Print size', dpi ? printSize(info.width, info.height, dpi[0]) : h('span', { class: 'muted' }, 'Set a DPI in Resize to define one')),
-    row('Orientation', info.orientation && info.orientation !== 1 ? `${ORIENTATION[info.orientation] || info.orientation} — corrected automatically` : 'Normal'),
-    info.frames > 1 ? row('Frames', `${info.frames} — animated; kept when every edit supports animation, else the first frame is used`) : null,
+    row('Print size', dpi ? printSize(info.width, info.height, dpi[0]) : h('span', { class: 'muted' }, 'Not set')),
+    row('Orientation', info.orientation && info.orientation !== 1 ? `${ORIENTATION[info.orientation] || info.orientation} (auto-corrected)` : 'Normal'),
+    info.frames > 1 ? row('Frames', `${info.frames} (animated)`) : null,
   );
   const parts = [general];
 
   if (gps) {
     parts.push(h('div', { class: `gps-chip ${stripping ? '' : 'gps-chip-danger'}` }, icon('pin', 16),
-      h('span', {}, stripping ? 'Location data present — removed on export' : 'Location data present — will be kept on export'),
+      h('span', {}, stripping ? 'Location · removed on export' : 'Location · kept on export'),
       h('span', { class: 'muted gps-coords' }, `${fmtNum(gps.lat, 5)}, ${fmtNum(gps.lon, 5)}`)));
   }
 
@@ -123,9 +123,9 @@ function renderInfo(body, info, complete) {
         h('caption', { class: 'sr-only' }, 'All EXIF tags'),
         h('tbody', {}, exif.sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => h('tr', {}, h('th', { scope: 'row' }, k), h('td', {}, exifValue(v)))))))));
   } else if (complete) {
-    parts.push(h('p', { class: 'muted' }, 'No EXIF metadata in this file.'));
+    parts.push(h('p', { class: 'muted' }, 'No EXIF data.'));
   } else {
-    parts.push(h('p', { class: 'muted' }, 'Loading full metadata…'));
+    parts.push(h('p', { class: 'muted' }, 'Loading…'));
   }
   body.replaceChildren(...parts);
 }

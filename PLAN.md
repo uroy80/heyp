@@ -522,8 +522,9 @@ created lazily, thread-safe. The background op works on images up to 50 MP (≈ 
 
 ## 7. UI (static/, no build step)
 
-**Look — editorial ("Broadsheet")**: a newspaper front page for photos. Nameplate `heyp :)`, a dateline with one
-factual line from `/api/config` (how long files are kept), the "heyp · heypdf" switch and today's date, a numbered
+**Look — editorial ("Broadsheet")**: a newspaper front page for photos, with as few words as possible: a title per
+panel (at most one short line), explanations behind small "i" buttons. Nameplate `heyp :)` over a slim rule carrying only
+the "heyp · heypdf" switch (no policy or retention text anywhere in the UI — that lives in /privacy), a numbered
 section rail whose first nine numbers are the `1–9` shortcuts, the picture as "Fig. 1" with a caption, printer's crop
 marks on the crop overlay, a red square marking edited tools and edit chips. Fonts are self-hosted (SIL OFL,
 `static/fonts/`): Fraunces (display), Libre Franklin (UI), IBM Plex Mono (figures). Colour tokens on `:root`

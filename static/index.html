@@ -27,7 +27,6 @@
       <span class="wordmark">heyp<span class="smile" aria-hidden="true"> :)</span></span>
     </a>
     <div class="topbar-actions">
-      <span class="local-pill"></span>
       <button type="button" class="btn btn-ghost add-btn" id="add-btn">
         <span class="add-icon" aria-hidden="true"></span><span class="add-label">Add photos</span>
       </button>
@@ -35,11 +34,9 @@
       <button type="button" class="icon-btn" id="theme-btn" aria-label="Toggle theme"></button>
     </div>
     <div class="dateline">
-      <span class="dateline-edition" aria-hidden="true"></span>
       <nav class="dateline-mid sibling" aria-label="Switch app">
-        <a href="/" class="sibling-link" aria-current="page">heyp <span class="sibling-what">images</span></a><span class="sibling-dot" aria-hidden="true" hidden>·</span><a href="#" class="sibling-link" data-app="heypdf" hidden>heypdf <span class="sibling-what">PDF tools</span></a>
+        <a href="/" class="sibling-link" aria-current="page" title="Image tools">heyp<span class="sr-only"> (images)</span></a><span class="sibling-dot" aria-hidden="true" hidden>·</span><a href="#" class="sibling-link" data-app="heypdf" hidden>heypdf<span class="sr-only"> (PDF tools)</span></a>
       </nav>
-      <time class="dateline-date" id="dateline-date" aria-hidden="true"></time>
     </div>
   </header>
 
@@ -53,15 +50,15 @@
         <div class="dropzone" id="dropzone">
           <div class="dz-inner">
             <div class="dz-icon" aria-hidden="true"></div>
-            <p class="dz-kicker">No photos yet</p>
+            <p class="dz-kicker" aria-hidden="true"></p>
             <h1 class="dz-title">Drop photos here</h1>
-            <p class="dz-lede">Convert iPhone HEIC to JPG, resize, crop, compress, upscale, watermark and make passport photos.</p>
+            <p class="dz-lede">Convert HEIC, resize, crop, compress and more.</p>
             <p class="dz-sub">
               <button type="button" class="btn btn-primary" id="dz-pick">Choose photos</button>
-              <span class="dz-or">or paste with <kbd class="kbd-mod">Ctrl</kbd>&thinsp;<kbd>V</kbd></span>
+              <span class="dz-or">or paste <kbd class="kbd-mod">Ctrl</kbd>&thinsp;<kbd>V</kbd></span>
             </p>
-            <p class="dz-formats">HEIC · JPG · PNG · WebP · AVIF · TIFF · BMP · GIF · ICO · JPEG&nbsp;2000 · PSD · SVG · RAW</p>
-            <p class="dz-privacy"><span class="dz-shield" aria-hidden="true"></span><span>Open source (AGPL-3.0)</span></p>
+            <p class="dz-formats">HEIC · JPG · PNG · WebP · RAW &amp; more</p>
+            <p class="dz-consent" hidden></p>
           </div>
         </div>
         <div class="stage" id="stage"></div>
@@ -92,7 +89,7 @@
       <section class="export" id="export" aria-labelledby="export-title"></section>
       <footer class="colophon" id="colophon">
         <nav class="colophon-links" id="colophon-links" aria-label="About heyp">
-          <a href="/privacy" target="_blank" rel="noopener">Privacy</a><a href="/terms" target="_blank" rel="noopener">Terms</a><a href="/credits" target="_blank" rel="noopener">Credits</a><a href="https://github.com/uroy80/heyp" target="_blank" rel="noopener">Source code (AGPL-3.0)</a>
+          <a href="/privacy" target="_blank" rel="noopener">Privacy</a><a href="/terms" target="_blank" rel="noopener">Terms</a><a href="/credits" target="_blank" rel="noopener">Credits</a><a href="https://github.com/uroy80/heyp" target="_blank" rel="noopener">Source (AGPL-3.0)</a>
         </nav>
         <p class="colophon-meta"><span id="colophon-operator"></span><span id="colophon-version"></span></p>
       </footer>
@@ -114,17 +111,17 @@
       <button type="button" class="icon-btn" id="help-close" aria-label="Close"></button>
     </div>
     <dl class="shortcuts">
-      <div><dt><kbd>1</kbd>–<kbd>9</kbd></dt><dd>Switch section (the rest are listed below)</dd></div>
-      <div><dt>Hold <kbd>Space</kbd></dt><dd>Show the original</dd></div>
+      <div><dt><kbd>1</kbd>–<kbd>9</kbd></dt><dd>Switch section</dd></div>
+      <div><dt>Hold <kbd>Space</kbd></dt><dd>Show original</dd></div>
       <div><dt><kbd>R</kbd> / <kbd>Shift</kbd> <kbd>R</kbd></dt><dd>Rotate right / left</dd></div>
       <div><dt><kbd class="kbd-mod">Ctrl</kbd> <kbd>S</kbd></dt><dd>Download</dd></div>
       <div><dt><kbd class="kbd-mod">Ctrl</kbd> <kbd>O</kbd></dt><dd>Add photos</dd></div>
-      <div><dt><kbd class="kbd-mod">Ctrl</kbd> <kbd>V</kbd></dt><dd>Paste an image</dd></div>
+      <div><dt><kbd class="kbd-mod">Ctrl</kbd> <kbd>V</kbd></dt><dd>Paste</dd></div>
       <div><dt><kbd>[</kbd> / <kbd>]</kbd></dt><dd>Previous / next photo</dd></div>
-      <div><dt><kbd>Del</kbd></dt><dd>Remove the current photo (in Blur and Photo editor: the selected box or layer; Watermark, Meme and Upscale keep the photo)</dd></div>
-      <div><dt><kbd>Esc</kbd></dt><dd>Revert crop changes</dd></div>
-      <div><dt>Arrows</dt><dd>Nudge the crop box or the selected layer (<kbd>Shift</kbd> ×10, <kbd>Alt</kbd> resizes)</dd></div>
-      <div><dt><kbd>[</kbd> / <kbd>]</kbd> on a layer</dt><dd>Turn the selected layer (<kbd>Shift</kbd> 15°)</dd></div>
+      <div><dt><kbd>Del</kbd></dt><dd>Remove photo or selection</dd></div>
+      <div><dt><kbd>Esc</kbd></dt><dd>Revert crop</dd></div>
+      <div><dt>Arrows</dt><dd>Nudge crop or layer (<kbd>Shift</kbd> ×10, <kbd>Alt</kbd> resizes)</dd></div>
+      <div><dt><kbd>[</kbd> / <kbd>]</kbd> on a layer</dt><dd>Rotate layer (<kbd>Shift</kbd> 15°)</dd></div>
     </dl>
   </dialog>
 

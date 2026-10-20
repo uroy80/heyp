@@ -3,7 +3,7 @@
 
 import { h, append } from '../dom.js';
 import { state, defaults, toolEntry } from '../state.js';
-import { toolHead, group, segmented, slider, toggle, note } from '../controls.js';
+import { toolHead, group, segmented, slider, toggle, note, infoTip } from '../controls.js';
 import { PAGE_WIDTHS } from '../catalog.js';
 import { fitOptions, enumOf } from '../schema.js';
 import { jobCard } from '../jobui.js';
@@ -60,7 +60,6 @@ export default {
   title: 'HTML → image',
   rail: 'Web page',
   icon: 'globe',
-  kicker: 'Capture a web page',
   jobTool: HTML_TOOL,
   needsFiles: false,
 
@@ -73,15 +72,15 @@ export default {
     r = {};
     const o = state.html;
     const tool = toolEntry(HTML_TOOL);
-    append(root, toolHead('HTML → image', 'Capture any public web page as a picture — the visible screen or the whole page.', { onReset: () => app.resetTool(this), active: false }));
+    append(root, toolHead('HTML → image', 'Capture any public web page.', { onReset: () => app.resetTool(this), active: false }));
     if (state.tools && !tool) {
-      append(root, note('This server doesn’t offer web page captures.', 'warn'));
+      append(root, note('Not available on this server.', 'warn'));
       return;
     }
     if (tool && tool.available === false) {
       // the server's reason is a whole sentence ("Web page capture is not set up on this server")
       const why = String(tool.reason || '').trim();
-      append(root, note(why ? `${why}${/[.!?]$/.test(why) ? '' : '.'}` : 'Web page capture needs the renderer service, which isn’t running on this server.', 'warn'));
+      append(root, note(why ? `${why}${/[.!?]$/.test(why) ? '' : '.'}` : 'Not available on this server.', 'warn'));
       return;
     }
     const id = 'html-url';
@@ -92,30 +91,31 @@ export default {
       oninput: () => { o.url = r.url.value; this.validate(false); },
       onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); this.start(app); } },
     });
-    append(root, group(null, h('div', { class: 'field' }, h('label', { htmlFor: id, class: 'label' }, 'Web page address'), r.url, r.err)));
+    const tip = infoTip(app.copy().renderNote, { label: 'About Web address' });
+    r.url.setAttribute('aria-describedby', `html-url-err ${tip.tipId}`);
+    append(root, group(null, h('div', { class: 'field' }, h('span', { class: 'label-tip' }, h('label', { htmlFor: id, class: 'label' }, 'Web address'), tip), r.url, r.err)));
 
     const widths = enumOf(tool?.options_schema, ['width', 'viewport_width', 'screen_width']);
     const opts = (widths ? widths.map((w) => PAGE_WIDTHS.find((p) => p.value === w) || { value: w, label: String(w) }) : PAGE_WIDTHS);
     if (!opts.some((p) => p.value === o.width)) o.width = opts.find((p) => p.value === 1440)?.value ?? opts[0].value;
     const width = segmented({
-      label: 'Screen width (px)', cols: Math.min(5, opts.length), size: 'sm', value: String(o.width),
+      label: 'Width (px)', cols: Math.min(5, opts.length), size: 'sm', value: String(o.width),
       options: opts.map((p) => ({ value: String(p.value), label: p.label, title: p.title })),
       onChange: (v) => { o.width = Number(v); },
     });
-    const full = toggle({ label: 'Whole page', checked: o.fullPage, hint: 'Off captures only the first screen.', onChange: (v) => { o.fullPage = v; } });
+    const full = toggle({ label: 'Whole page', checked: o.fullPage, onChange: (v) => { o.fullPage = v; } });
     const format = segmented({ label: 'Format', cols: 2, value: o.format, options: [{ value: 'jpg', label: 'JPG' }, { value: 'png', label: 'PNG' }], onChange: (v) => { o.format = v; } });
-    const delay = slider({ label: 'Wait before capture', min: 0, max: 10, step: 0.5, value: o.delay, resetTo: 0, format: (v) => `${v} s`, onInput: (v) => { o.delay = v; } });
-    const banners = toggle({ label: 'Hide cookie banners and pop-ups', checked: o.blockBanners, onChange: (v) => { o.blockBanners = v; } });
+    const delay = slider({ label: 'Delay', min: 0, max: 10, step: 0.5, value: o.delay, resetTo: 0, format: (v) => `${v} s`, onInput: (v) => { o.delay = v; } });
+    const banners = toggle({ label: 'Hide cookie banners', checked: o.blockBanners, onChange: (v) => { o.blockBanners = v; } });
     append(root, group('Capture', width, full, format, delay, banners));
 
     append(root, jobCard('html', {
       startLabel: 'Capture page',
       startIcon: 'globe',
-      disabled: () => (!tool && !state.tools ? 'Checking what this server offers…' : null),
+      disabled: () => (!tool && !state.tools ? 'Loading…' : null),
       onStart: () => this.start(app),
       renderResult: (res) => app.resultView(res, { kind: 'image', ext: o.format, source: 'html' }),
     }));
-    append(root, h('p', { class: 'hint' }, app.copy().renderNote));
   },
 
   validate(show = true) {

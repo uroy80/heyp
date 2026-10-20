@@ -58,7 +58,7 @@ export default {
 
     // Rotate batch filter: quarter turns for all photos, or only the landscape / portrait ones
     const only = segmented({
-      label: 'Rotate', cols: 3, size: 'sm', value: e.only,
+      label: 'Turn', cols: 3, size: 'sm', value: e.only, tip: 'Which photos the rotate buttons turn. Flip, straighten and tone apply to all.',
       options: [{ value: 'all', label: 'All photos' }, { value: 'landscape', label: 'Landscape' }, { value: 'portrait', label: 'Portrait' }],
       onChange: (v) => {
         const reset = setRotateOnly(v);
@@ -69,10 +69,10 @@ export default {
     const n = state.files.length;
     const hit = state.files.filter((f) => quarterApplies(f)).length;
     const onlyHint = e.only === 'all' || !n ? null
-      : h('p', { class: 'hint' }, `Turns ${hit} of ${n} photo${n > 1 ? 's' : ''} (the ${e.only} ones). Flips, straighten and tone still apply to all.`);
+      : h('p', { class: 'hint' }, `Turns ${hit} of ${n}.`);
     append(root,
-      toolHead('Edit', 'Rotate, flip, straighten and adjust tone. Applies to every file.', { onReset: () => app.resetTool(this), active: this.isActive() }),
-      group('Orientation', orient, only, onlyHint, h('p', { class: 'hint' }, `Now: ${e.quarter ? `${e.quarter}° clockwise` : 'as shot'}${e.plainFlipH || e.plainFlipV ? ', mirrored' : ''}. EXIF orientation is already applied.`)),
+      toolHead('Edit', null, { onReset: () => app.resetTool(this), active: this.isActive() }),
+      group('Orientation', orient, only, onlyHint),
       group('Straighten', straighten, cropEdges),
       group('Tone', ...tone,
         toggle({ label: 'Auto contrast', checked: e.autoContrast, onChange: (v) => { e.autoContrast = v; app.changed(); } }),
