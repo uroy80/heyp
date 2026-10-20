@@ -15,6 +15,6 @@ onnxruntime==1.31.0
 # --- image inputs and text -------------------------------------------------------------------------------
 resvg-py==0.5.0          # SVG → raster (MIT); always called with an explicit size cap + bundled fonts
 rawpy==0.27.1            # camera RAW (LibRaw, LGPL/CDDL)
-psd-tools==1.23.0        # 16/32-bit PSD + PSB (Pillow handles 8-bit composites)
+psd-tools==1.24.0        # 16/32-bit PSD + PSB (Pillow handles 8-bit composites)
 scour==0.38.2            # SVG optimiser — only ever with embed_rasters=False (no URL fetches)
 fonttools==4.67.0        # per-character font fallback for text on images (app/imaging/text.py)
