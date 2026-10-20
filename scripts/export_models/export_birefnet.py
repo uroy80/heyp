@@ -71,7 +71,7 @@ def main() -> None:
 
     diff = float(np.abs(sig(y) - sig(ref)).max())
     print("max |sigmoid(torch) - sigmoid(onnxruntime)|", diff)
-    if diff > 1e-2:
+    if diff > 1e-4:
         raise SystemExit("export does not match PyTorch")
     print("sha256", hashlib.sha256(open(out, "rb").read()).hexdigest(), out)
 

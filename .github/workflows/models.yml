@@ -1,6 +1,7 @@
-# Models: rebuild the ONNX models heyp exports itself (byte for byte, checked against the pins), fetch the
-# third-party ones from upstream (also verified), and attach every pinned file the models-v1 release is still
-# missing. Run it by hand after a pin changes or when an asset is missing:
+# Models: rebuild the ONNX models heyp exports itself (Real-ESRGAN byte for byte against the pins, BiRefNet by
+# parity with PyTorch) and attach those the models-v1 release is still missing; third-party models come from
+# their upstream URLs. A newly attached BiRefNet is the canonical copy: pin its sha256/size (printed in the run
+# summary) in scripts/fetch_models.py and scripts/export_models/SHA256SUMS. Run it by hand after a pin changes or when an asset is missing:
 #   Actions → Models → Run workflow   (or: gh workflow run models.yml)
 # Image builds download from that release (scripts/fetch_models.py), so nothing here touches the images.
 name: Models
@@ -26,10 +27,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Export heyp's own models (fails unless every byte matches SHA256SUMS)
+      - name: Export heyp's own models (Real-ESRGAN byte for byte, BiRefNet by parity with PyTorch)
         run: sh scripts/export_models/export_all.sh "$RUNNER_TEMP/models"
-      - name: Add the third-party models (verified against their pins)
-        run: python3 -I scripts/fetch_models.py "$RUNNER_TEMP/models" --with-optional
       - name: Attach what models-v1 is missing
         env:
           GH_TOKEN: ${{ github.token }}
@@ -37,12 +36,12 @@ jobs:
         run: |
           set -euo pipefail
           have=$(gh release view models-v1 --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | select(.state == "uploaded") | .name')
-          for f in "$MODELS"/*.onnx; do
+          for f in "$MODELS"/realesr-*.onnx "$MODELS"/birefnet-*.onnx; do
             name=$(basename "$f")
             if grep -qxF "$name" <<<"$have"; then
               echo "present: $name"
             else
               gh release upload models-v1 "$f" --repo "$GITHUB_REPOSITORY" --clobber
-              echo "attached: $name" | tee -a "$GITHUB_STEP_SUMMARY"
+              echo "attached: $name sha256=$(sha256sum "$f" | cut -d' ' -f1) bytes=$(wc -c <"$f")" | tee -a "$GITHUB_STEP_SUMMARY"
             fi
           done

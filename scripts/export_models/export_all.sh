@@ -19,6 +19,16 @@ run --network none "$image" sh -c '
          /work/src/realesr-general-wdn-x4v3.pth 0.5
   python -I /x/export_birefnet.py /work/src /work/src/birefnet_lite.safetensors /work/birefnet-lite-dc-1024.onnx 1024 19
   python -I /x/quantize_birefnet.py /work/birefnet-lite-dc-1024.onnx /work/birefnet-lite-dc-1024.int8.onnx'
-# 3. byte-for-byte check against the pins
-cd "$out" && sha256sum -c "$here/SHA256SUMS"
-echo "all exports match SHA256SUMS; add the third-party models (python3 scripts/fetch_models.py $out --with-optional), then: scripts/publish_models.sh $out"
+# 3. Real-ESRGAN exports must match the pins byte for byte. BiRefNet's ONNX bytes depend on the CPU the export ran
+#    on (constant folding), so it is verified by parity with PyTorch instead (export_birefnet.py fails above 1e-4);
+#    the copy in the models-v1 release, built by the Models workflow on a GitHub runner, is the pinned one.
+cd "$out"
+grep -F ' realesr-' "$here/SHA256SUMS" | sha256sum -c -
+for f in birefnet-lite-dc-1024.onnx birefnet-lite-dc-1024.int8.onnx; do
+  if grep -F " $f" "$here/SHA256SUMS" | sha256sum -c --status - 2>/dev/null; then
+    echo "$f: OK (matches the pin)"
+  else
+    echo "$f: parity with PyTorch verified; bytes differ from the pin: sha256 $(sha256sum "$f" | cut -d' ' -f1), $(wc -c <"$f") bytes"
+  fi
+done
+echo "exports verified; add the third-party models (python3 scripts/fetch_models.py $out --with-optional), then: scripts/publish_models.sh $out"
