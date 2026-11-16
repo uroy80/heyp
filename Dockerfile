@@ -5,7 +5,7 @@
 # FROM line lets Dependabot propose digest bumps. To pick up Debian/Python security fixes by hand:
 # `scripts/lock.sh --base` prints the current digest of python:3.12-slim-trixie; paste it below, rebuild, and run
 # scripts/smoke.sh.
-FROM python:3.12.15-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS pybase
+FROM python:3.12.16-slim-trixie@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS pybase
 
 # --- models: ONNX weights, verified against pinned size + sha256 (any mismatch fails the build) ---------
 FROM pybase AS models
